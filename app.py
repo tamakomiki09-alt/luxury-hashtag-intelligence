@@ -221,9 +221,16 @@ def load_and_process_data(path):
 # ------------------------------------------------------------
 # 5. MAIN EXECUTION
 # ------------------------------------------------------------
-url = "https://raw.githubusercontent.com/tamakomiki09-alt/luxury-hashtag-intelligence/main/instagramscraperfile.csv"
-df_raw = load_and_process_data(url)
-
+# --- DATA LOADING WITH DEBUGGING ---
+try:
+    # Try to load the file normally
+    df_raw = load_and_process_data("instagramscraperfile.csv")
+except Exception as e:
+    # If it fails, PRINT the error and the list of files to the screen
+    import os
+    st.error(f"CRITICAL ERROR: {e}")
+    st.error(f"Files actually found in this folder: {os.listdir('.')}")
+    st.stop()
 if df_raw.empty:
     st.error("Data missing. Please ensure 'instagramscraperfile.csv' is in the directory.")
     st.stop()
