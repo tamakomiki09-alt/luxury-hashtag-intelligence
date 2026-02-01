@@ -1,5 +1,3 @@
-
-# Force Update 999
 # Luxury Hospitality Intelligence — Tokyo
 # Executive Dashboard (Research & Strategy Edition)
 # ============================================================
@@ -148,7 +146,8 @@ def ai_classify_batch(df_sample):
             temperature=0
         )
         return json.loads(resp.choices[0].message.content)
-    except Exception:
+    except Exception as e:
+        st.error(f"DEBUG Error: {e}")  # <--- This will print the real error on your screen
         return {}
 
 def generate_executive_insight(data_context, section_name):
