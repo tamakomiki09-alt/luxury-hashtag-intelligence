@@ -221,7 +221,8 @@ def load_and_process_data(path):
 # ------------------------------------------------------------
 # 5. MAIN EXECUTION
 # ------------------------------------------------------------
-df_raw = load_and_process_data("instagramscraperfile.csv")
+url = "https://raw.githubusercontent.com/tamakomiki09-alt/luxury-hashtag-intelligence/main/instagramscraperfile.csv"
+df_raw = load_and_process_data(url)
 
 if df_raw.empty:
     st.error("Data missing. Please ensure 'instagramscraperfile.csv' is in the directory.")
