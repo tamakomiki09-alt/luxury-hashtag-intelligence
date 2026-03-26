@@ -222,6 +222,7 @@ def load_and_process_data(path):
 # 5. MAIN EXECUTION
 # ------------------------------------------------------------
 # --- DATA LOADING WITH DEBUGGING ---
+
 try:
     # Try to load the file normally
     df_raw = load_and_process_data("instagramscraperfile.csv")
@@ -231,9 +232,15 @@ except Exception as e:
     st.error(f"CRITICAL ERROR: {e}")
     st.error(f"Files actually found in this folder: {os.listdir('.')}")
     st.stop()
+
 if df_raw.empty:
     st.error("Data missing. Please ensure 'instagramscraperfile.csv' is in the directory.")
     st.stop()
+
+# --- NEW: TIMELINE CUTOFF ---
+# Filter out sparse data: Keep only posts from May 1st, 2023 onwards
+df_raw = df_raw[df_raw["Timestamp"] >= "2023-05-01"]
+
 
 # --- AI ENHANCEMENT STEP ---
 # Only run on high-frequency tags to save time/cost, or a sample for the paper
