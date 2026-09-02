@@ -1,7 +1,4 @@
-streamlit
-pandas
-numpy
-plotly
-scikit-learn
-python-dateutil
-openai
+streamlit>=1.30
+altair>=5.0
+pandas>=2.0
+numpy>=1.24
