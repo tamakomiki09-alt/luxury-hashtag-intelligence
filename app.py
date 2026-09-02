@@ -120,11 +120,31 @@ def is_japanese(text: str) -> bool:
     return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text))
 
 
+def find_data_file(preferred: str):
+    """Locate the export next to this script.
+
+    Streamlit Cloud does not guarantee that the working directory is the repo
+    root, so a bare relative filename can miss. Look beside the script first,
+    then fall back to any Apify export in the same folder.
+    """
+    here = Path(__file__).resolve().parent
+    for candidate in (here / preferred, Path.cwd() / preferred):
+        if candidate.exists():
+            return candidate
+
+    for pattern in ("dataset_instagram-scraper*.csv", "*.csv"):
+        matches = sorted(here.glob(pattern))
+        if matches:
+            # Largest file is the full export rather than a partial run.
+            return max(matches, key=lambda p: p.stat().st_size)
+    return None
+
+
 @st.cache_data(show_spinner="Loading dataset…")
 def load_posts(path: str):
     """Return one row per post, with hashtag counts attached."""
-    source = Path(path)
-    if not source.exists():
+    source = find_data_file(path)
+    if source is None:
         return None, None
 
     raw = pd.read_csv(source, encoding="utf-8-sig", low_memory=False)
@@ -221,10 +241,11 @@ def bar(data, value, label, focal, value_title, fmt=".2f", height=230):
 posts, long = load_posts(DATA_FILE)
 
 if posts is None:
-    st.error(
-        f"Can't find **{DATA_FILE}**. Put the Apify export in the same folder "
-        "as this script, or change DATA_FILE at the top."
-    )
+    here = Path(__file__).resolve().parent
+    present = sorted(p.name for p in here.iterdir() if p.is_file())
+    st.error(f"No CSV found in `{here}`.")
+    st.write("Files this script can see:")
+    st.code("\n".join(present) or "(the folder is empty)")
     st.stop()
 
 window_label = (
