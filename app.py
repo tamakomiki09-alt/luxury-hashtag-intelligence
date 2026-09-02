@@ -1,440 +1,654 @@
-# Luxury Hospitality Intelligence — Tokyo
-# Executive Dashboard (Research & Strategy Edition)
-# ============================================================
+"""
+Tokyo Luxury Hotel Instagram — Hashtag Strategy Review
+======================================================
 
-import os
-import json
-import random
+A comparative diagnostic across six Tokyo luxury hotels.
+
+Run:
+    streamlit run app.py
+
+Expects the Apify export in the same folder:
+    dataset_instagram-scraper-task-3_2026-09-02_10-51-38-883.csv
+"""
+
+import re
+import unicodedata
+from pathlib import Path
+
+import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
-import altair as alt
 
-# ------------------------------------------------------------
-# 1. VISUAL CONFIGURATION (BOARDROOM AESTHETIC)
-# ------------------------------------------------------------
-st.set_page_config(
-    page_title="Executive Intelligence | Tokyo Luxury",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+# ----------------------------------------------------------------------------
+# Configuration
+# ----------------------------------------------------------------------------
 
-# Custom CSS for Executive Polish & Card UI
-st.markdown("""
-    <style>
-        /* Main Background */
-        .stApp { background-color: #f4f6f9; }
-        
-        /* Card Styling */
-        .css-1r6slb0, .css-12oz5g7, .stMetric {
-            background-color: white;
-            padding: 1.2rem;
-            border-radius: 8px;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        
-        /* Typography */
-        h1 { font-family: 'Helvetica Neue', sans-serif; font-weight: 700; color: #1a202c; letter-spacing: -0.02em;}
-        h3 { font-family: 'Helvetica Neue', sans-serif; font-weight: 600; color: #4a5568; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2rem;}
-        p { font-family: 'Helvetica Neue', sans-serif; color: #4a5568; line-height: 1.6; }
-        
-        /* DataFrame Styling */
-        .stDataFrame { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
-        
-        /* Hide Default Menu */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
+DATA_FILE = "dataset_instagram-scraper-task-3_2026-09-02_10-51-38-883.csv"
+WINDOW_START = "2023-05-01"
 
-# ------------------------------------------------------------
-# 2. STRATEGIC DEFINITIONS & HARD CONSTRAINTS
-# ------------------------------------------------------------
-ALLOWED_ACCOUNTS = [
-    "aman_tokyo", "thepeninsulatokyo", "parkhyatttokyo", 
-    "janutokyo", "thecapitolhoteltokyu", "ritzcarltontokyo", "fstokyo"
-]
-
-# TAXONOMY: Split Ambiguous into "Event" and "Ambient"
-THEME_KEYWORDS = {
-    "Brand / Property": ["aman", "peninsula", "parkhyatt", "hyatt", "ritz", "fourseason", "janu", "capitol", "origami", "peter", "club", "suite", "rcmemories"],
-    "Place / Location": ["tokyo", "japan", "ginza", "roppongi", "marunouchi", "azabudai", "toranomon", "mtfuji"],
-    "Dining / Wellness": ["spa", "dining", "restaurant", "bar", "omakase", "sushi", "tea", "foodie", "breakfast", "lunch", "dinner", "pastry", "cocktail", "wine"],
-    "Experience / Atmosphere": ["experience", "stay", "moment", "journey", "design", "view", "architecture", "hospitality", "service", "lobby", "art"],
-    "Event / Activation": ["wedding", "bridal", "christmas", "xmas", "newyear", "sakura", "valentine", "anniversary", "fair", "event", "season", "limited", "offer", "festive"],
-    "Generic Travel / Lifestyle": ["travel", "vacation", "wanderlust", "holiday", "explore", "trip", "weekend", "getaway", "tourism", "hotel", "hotellife", "travelgram"],
-    "Ambient / Low-Signal": ["photo", "pic", "daily", "gram", "mood", "vibe", "instagood", "like", "follow", "beautiful", "style", "life"] 
+HOTELS = {
+    "aman_tokyo": "Aman Tokyo",
+    "thepeninsulatokyo": "The Peninsula Tokyo",
+    "parkhyatttokyo": "Park Hyatt Tokyo",
+    "janutokyo": "Janu Tokyo",
+    "thecapitolhoteltokyu": "The Capitol Hotel Tokyu",
+    "ritzcarltontokyo": "The Ritz-Carlton, Tokyo",
 }
 
-FINAL_THEMES = list(THEME_KEYWORDS.keys())
+# Ordered so charts read consistently everywhere.
+HOTEL_ORDER = [
+    "The Peninsula Tokyo",
+    "Janu Tokyo",
+    "Aman Tokyo",
+    "Park Hyatt Tokyo",
+    "The Ritz-Carlton, Tokyo",
+    "The Capitol Hotel Tokyu",
+]
 
-# ------------------------------------------------------------
-# 3. INTELLIGENCE ENGINE (RULES + AI + LOGIC)
-# ------------------------------------------------------------
+INK = "#1B1B18"
+MUTED = "#75736B"
+RULE = "#DFDBD1"
+PAPER = "#FBFAF7"
+ACCENT = "#2E5248"        # focal hotel
+NEUTRAL = "#C8C4B8"       # peer hotels
 
-def get_rule_based_classification(tag):
-    """Returns (Theme, Rationale) tuple based on keyword matching."""
-    tag_lower = str(tag).lower()
-    for theme, keywords in THEME_KEYWORDS.items():
-        for k in keywords:
-            if k in tag_lower:
-                return theme
-    return "Ambient / Low-Signal"
+st.set_page_config(
+    page_title="Tokyo Luxury Hotel Instagram Review",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-def generate_smart_rationale(row):
+st.markdown(
+    f"""
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+      .stApp {{ background: {PAPER}; }}
+      .block-container {{ max-width: 1080px; padding-top: 3rem; padding-bottom: 5rem; }}
+
+      html, body, [class*="css"] {{
+          font-family: 'IBM Plex Sans', system-ui, sans-serif;
+          color: {INK};
+      }}
+      h1, h2, h3 {{ font-family: 'Newsreader', Georgia, serif; font-weight: 400; }}
+      h1 {{ font-size: 2.45rem; line-height: 1.15; letter-spacing: -0.015em; margin-bottom: .2rem; }}
+      h2 {{ font-size: 1.6rem; margin-top: 3.2rem; margin-bottom: .4rem; }}
+      h3 {{ font-size: 1.15rem; margin-top: 1.6rem; }}
+
+      p, li {{ font-size: 0.95rem; line-height: 1.62; max-width: 68ch; color: #33322D; }}
+
+      .lede {{ font-family: 'Newsreader', Georgia, serif; font-size: 1.22rem;
+              line-height: 1.55; color: {MUTED}; max-width: 62ch; margin-bottom: 1.4rem; }}
+      .note {{ font-size: 0.83rem; color: {MUTED}; line-height: 1.55; max-width: 70ch; }}
+      .rule {{ border-top: 1px solid {RULE}; margin: 2.6rem 0 0 0; }}
+
+      .figure {{ font-family: 'Newsreader', Georgia, serif; font-size: 2.9rem;
+                line-height: 1; color: {ACCENT}; }}
+      .figure-label {{ font-size: 0.86rem; color: {MUTED}; margin-top: .35rem; max-width: 30ch; }}
+
+      .finding {{ border-left: 2px solid {ACCENT}; padding: .1rem 0 .1rem 1.1rem;
+                 margin: 1.4rem 0; max-width: 66ch; }}
+      .finding strong {{ font-weight: 600; }}
+
+      div[data-testid="stMetricValue"] {{ font-family: 'Newsreader', serif; font-weight: 400; }}
+      #MainMenu, footer, header {{ visibility: hidden; }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ----------------------------------------------------------------------------
+# Data preparation
+# ----------------------------------------------------------------------------
+
+def strip_invisible(text: str) -> str:
+    """Remove Unicode format characters (Cf) such as U+2060 word joiner.
+
+    Instagram treats a tag containing an invisible character as distinct from
+    the same tag without it, so these need to be tracked, not silently dropped.
     """
-    Generates a research-grade, explanatory rationale for each classification.
-    """
-    hashtag = str(row["Hashtag"])
-    rule = str(row["Rule_Theme"])
-    ai = str(row["AI_Theme"])
-    final = str(row["Final_Theme"])
-    
-    # CASE 0: ABSTRACT TOKENS (Handling ??? or encoding artifacts)
-    if "?" in hashtag or len(hashtag) < 2:
-        return "Abstract Aesthetic Token: Low-semantic visual descriptor (e.g., emoji/symbol) retained as 'Ambient' to capture non-verbal signaling."
-
-    # CASE 1: INTENTIONAL AMBIGUITY
-    if "Ambient" in final:
-        return "Ambiguity Preserved: Tag lacks specific semantic markers. Retained to capture 'Strategic Restraint' (visual-first signaling)."
-
-    # CASE 2: GENERIC / LIFESTYLE
-    if "Generic" in final and "Brand" not in final:
-        return "Broadcast Signal Isolation: High-frequency industry tag classified as Generic/Lifestyle to protect brand equity precision."
-
-    # CASE 3: CONTEXTUAL OVERRIDE (AI Correction)
-    if rule != ai and rule != "None" and ai != "None" and not pd.isna(ai) and ai != "—":
-        if "Event" in final:
-            return f"Temporal Override: Contextual analysis reclassified lexical match '{rule}' to 'Event' due to seasonal/time-bound markers."
-        return f"Semantic Refinement: AI context overrode dictionary match '{rule}' to prioritize higher-confidence theme '{final}'."
-
-    # CASE 4: STRUCTURAL CONSENSUS
-    if rule == ai:
-        if "Brand" in final:
-            return "Entity Verification: Deterministic keyword match confirmed by context. High-confidence explicit brand signal."
-        return "Structural Consensus: Lexical rule and Contextual analysis independently converged on the same theme."
-
-    # CASE 5: FREQUENCY THRESHOLD
-    if pd.isna(row["AI_Theme"]) or row["AI_Theme"] == "—":
-        return "Heuristic Baseline: Low-frequency signal classified via deterministic dictionary rules only."
-
-    return "Standard Classification"
-
-def ai_classify_batch(df_sample):
-    """Classifies a batch of hashtags using OpenAI."""
-    if "OPENAI_API_KEY" not in st.secrets:
-        return {}
-
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        
-        tags = df_sample.unique().tolist()
-        if not tags: return {}
-
-        prompt = (
-            f"Classify these hashtags into ONE of: {FINAL_THEMES}. "
-            "Distinguish 'Event / Activation' (time-bound/campaigns) from 'Ambient / Low-Signal' (aesthetic/filler). "
-            "Return JSON object: {\"hashtag\": {\"theme\": \"...\", \"rationale\": \"...\"}}"
-            f"\n\nHashtags: {', '.join(tags)}"
-        )
-
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={ "type": "json_object" },
-            temperature=0
-        )
-        return json.loads(resp.choices[0].message.content)
-    except Exception as e:
-        st.error(f"DEBUG Error: {e}")  # <--- This will print the real error on your screen
-        return {}
-
-def generate_executive_insight(data_context, section_name):
-    """Generates GM-level commentary based on data context."""
-    if "OPENAI_API_KEY" not in st.secrets:
-        return "AI Analysis Unavailable (Add API Key to secrets.toml)"
-    
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        
-        prompt = (
-            f"You are a luxury hospitality strategy consultant for a Tokyo General Manager. "
-            f"Analyze this data table regarding '{section_name}':\n{data_context}\n\n"
-            "Write 3 short, punchy bullet points interpreting the strategic implications. "
-            "Focus on: Brand Discipline, Signal-to-Noise Ratio, and Engagement Intent. "
-            "Do not describe the chart; interpret the strategy. Use 'We' or 'Peer Group' framing."
-        )
-
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
-        )
-        return resp.choices[0].message.content
-    except:
-        return "AI Analysis failed to generate."
-
-# ------------------------------------------------------------
-# 4. DATA PIPELINE
-# ------------------------------------------------------------
-@st.cache_data
-def load_and_process_data(path):
-    if not os.path.exists(path):
-        return pd.DataFrame()
-
-    try:
-        df = pd.read_csv(path, encoding="utf-8-sig")
-    except:
-        df = pd.read_csv(path, encoding="latin-1")
-
-    # Strict Filtering
-    df["ownerUsername"] = df["ownerUsername"].str.lower().str.strip()
-    df = df[df["ownerUsername"].isin(ALLOWED_ACCOUNTS)]
-
-    # Explode Hashtags
-    hashtag_cols = [c for c in df.columns if c.startswith("hashtags/")]
-    records = []
-    
-    for _, row in df.iterrows():
-        ts = pd.to_datetime(row["timestamp"], errors="coerce")
-        for c in hashtag_cols:
-            if pd.notna(row[c]):
-                tag_clean = str(row[c]).lower().lstrip("#")
-                if tag_clean:
-                    # Apply Rule-Based immediately
-                    r_theme = get_rule_based_classification(tag_clean)
-                    records.append({
-                        "Hotel": row["ownerUsername"],
-                        "Timestamp": ts,
-                        "Month": ts.to_period("M").to_timestamp() if pd.notna(ts) else None,
-                        "Engagement": row["commentsCount"],
-                        "Hashtag": tag_clean,
-                        "Rule_Theme": r_theme,
-                        "Final_Theme": r_theme, # Default to rule
-                        "AI_Theme": None # Placeholder
-                    })
-    
-    return pd.DataFrame(records)
-
-# ------------------------------------------------------------
-# 5. MAIN EXECUTION
-# ------------------------------------------------------------
-# --- DATA LOADING WITH DEBUGGING ---
-
-try:
-    # Try to load the file normally
-    df_raw = load_and_process_data("instagramscraperfile.csv")
-except Exception as e:
-    # If it fails, PRINT the error and the list of files to the screen
-    import os
-    st.error(f"CRITICAL ERROR: {e}")
-    st.error(f"Files actually found in this folder: {os.listdir('.')}")
-    st.stop()
-
-if df_raw.empty:
-    st.error("Data missing. Please ensure 'instagramscraperfile.csv' is in the directory.")
-    st.stop()
-
-# --- NEW: TIMELINE CUTOFF ---
-# Filter out sparse data: Keep only posts from May 1st, 2023 onwards
-df_raw = df_raw[df_raw["Timestamp"] >= "2023-05-01"]
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
-# --- AI ENHANCEMENT STEP ---
-# Only run on high-frequency tags to save time/cost, or a sample for the paper
-top_tags = df_raw["Hashtag"].value_counts().head(60).index.tolist()
+def has_invisible(text: str) -> bool:
+    return any(unicodedata.category(ch) == "Cf" for ch in text)
 
-if "OPENAI_API_KEY" in st.secrets:
-    with st.spinner("AI Analyst: Validating Classification Models..."):
-        ai_results = ai_classify_batch(pd.Series(top_tags))
-        
-        # Apply AI overrides
-        for i, row in df_raw.iterrows():
-            if row["Hashtag"] in ai_results:
-                tag_data = ai_results.get(row["Hashtag"])
-                if tag_data:
-                    theme_val = tag_data.get("theme")
-                    df_raw.at[i, "AI_Theme"] = theme_val
-                    df_raw.at[i, "Final_Theme"] = theme_val # Override
 
-# ------------------------------------------------------------
-# 6. DASHBOARD UI
-# ------------------------------------------------------------
+def is_japanese(text: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text))
 
-# HEADER
-st.title("Tokyo Luxury Hospitality: Strategic Signal Analysis")
-st.markdown("**Focus:** Brand Language Discipline & Engagement Quality (Comments)")
 
-# SECTION 1: TEMPORAL VELOCITY
-st.markdown("### I. Seasonal Signal Velocity")
-st.caption("Distinguishing structural brand language (steady state) from activation spikes (campaigns).")
+@st.cache_data(show_spinner="Loading dataset…")
+def load_posts(path: str):
+    """Return one row per post, with hashtag counts attached."""
+    source = Path(path)
+    if not source.exists():
+        return None, None
 
-time_agg = df_raw.groupby(["Month", "Final_Theme"]).size().reset_index(name="Volume")
+    raw = pd.read_csv(source, encoding="utf-8-sig", low_memory=False)
 
-line_chart = alt.Chart(time_agg).mark_line(point=True).encode(
-    x=alt.X("Month:T", title=None, axis=alt.Axis(format="%b %Y")),
-    y=alt.Y("Volume:Q", title="Hashtag Usage Count"),
-    color=alt.Color("Final_Theme:N", scale=alt.Scale(scheme='tableau10'), legend=alt.Legend(title=None, orient="bottom")),
-    tooltip=["Month", "Final_Theme", "Volume"]
-).properties(height=350)
+    tag_cols = [c for c in raw.columns if re.fullmatch(r"hashtags/\d+", c)]
+    keep = ["ownerUsername", "timestamp", "caption", "likesCount",
+            "commentsCount", "type"]
+    keep = [c for c in keep if c in raw.columns]
 
-st.altair_chart(line_chart, use_container_width=True)
+    df = raw[keep + tag_cols].copy()
+    df["account"] = df["ownerUsername"].astype(str).str.lower().str.strip()
+    df = df[df["account"].isin(HOTELS)].copy()
+    df["hotel"] = df["account"].map(HOTELS)
 
-with st.expander("AI Analyst: Temporal Interpretation", expanded=False):
-    st.markdown(generate_executive_insight(time_agg.to_string(), "Seasonal Signal Velocity"))
+    df["date"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+    df = df[df["date"] >= WINDOW_START].copy()
 
-st.divider()
+    df["tag_count"] = df[tag_cols].notna().sum(axis=1)
+    df["likes"] = pd.to_numeric(df["likesCount"], errors="coerce")
+    df["comments"] = pd.to_numeric(df["commentsCount"], errors="coerce")
+    df["format"] = df["type"].replace({"Sidecar": "Carousel"})
+    df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
 
-# METRICS ROW
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Competitive Set", f"{df_raw['Hotel'].nunique()} Hotels")
-kpi2.metric("Analyzed Signals", f"{len(df_raw):,} Tags")
-kpi3.metric("Total Engagement", f"{df_raw['Engagement'].sum():,} Comments")
-kpi4.metric("Signal Efficiency", f"{df_raw.groupby('Hotel')['Engagement'].mean().mean():.1f} Comments/Post")
+    posts = df[["hotel", "date", "month", "tag_count", "likes",
+                "comments", "format"]].reset_index(drop=True)
 
-st.markdown("### ") 
+    # Long form: one row per hashtag occurrence.
+    long = df.melt(
+        id_vars=["hotel", "date", "likes", "comments"],
+        value_vars=tag_cols,
+        value_name="tag_raw",
+    ).dropna(subset=["tag_raw"])
 
-# SECTION 2: STRATEGY & PERFORMANCE
-col_left, col_right = st.columns(2)
+    long["tag_raw"] = long["tag_raw"].astype(str).str.strip().str.lstrip("#")
+    long = long[long["tag_raw"] != ""].copy()
+    long["invisible"] = long["tag_raw"].apply(has_invisible)
+    long["tag"] = long["tag_raw"].apply(strip_invisible).str.lower().str.strip()
+    long["script"] = np.where(long["tag"].apply(is_japanese), "Japanese", "Latin")
+    long = long[long["tag"] != ""].copy()
 
-# LEFT: POSITIONING STRATEGY
-with col_left:
-    st.markdown("### II. Market Positioning (Inputs)")
-    st.caption("Language Mix: Explicit Signaling vs. Ambient Restraint")
-    
-    fp = df_raw.groupby(["Hotel", "Final_Theme"]).size().reset_index(name="count")
-    
-    strat_chart = alt.Chart(fp).mark_bar().encode(
-        x=alt.X("count:Q", stack="normalize", axis=None),
-        y=alt.Y("Hotel:N", title=None),
-        color=alt.Color("Final_Theme:N", legend=None),
-        tooltip=["Hotel", "Final_Theme", "count"]
-    ).properties(height=400)
-    
-    st.altair_chart(strat_chart, use_container_width=True)
-    
-    with st.expander("AI Analyst: Strategy Review"):
-        st.markdown(generate_executive_insight(fp.to_string(), "Language Mix Strategy"))
+    return posts, long.reset_index(drop=True)
 
-# RIGHT: ENGAGEMENT PERFORMANCE
-with col_right:
-    st.markdown("### III. Engagement Quality (Outputs)")
-    st.caption("Median Comments by Linguistic Theme")
-    
-    perf = df_raw.groupby("Final_Theme")["Engagement"].median().reset_index().sort_values("Engagement", ascending=False)
-    
-    perf_chart = alt.Chart(perf).mark_bar().encode(
-        x=alt.X("Engagement:Q", title="Median Comments"),
-        y=alt.Y("Final_Theme:N", sort='-x', title=None),
-        color=alt.condition(
-            alt.datum.Final_Theme == 'Ambient / Low-Signal',
-            alt.value('#cbd5e0'), # Muted
-            alt.value('#3182ce')  # Active
-        )
-    ).properties(height=400)
-    
-    st.altair_chart(perf_chart, use_container_width=True)
 
-    with st.expander("AI Analyst: Performance Correlation"):
-        st.markdown(generate_executive_insight(perf.to_string(), "Theme Performance"))
-
-st.divider()
-
-# ------------------------------------------------------------
-# SECTION 4: RESEARCH VALIDATION & AUDIT
-# ------------------------------------------------------------
-st.markdown("### IV. Methodological Audit & Interpretive Validity")
-
-# 1. TEXTUAL FRAMING (UPDATED WITH PROVENANCE & EVENT LOGIC)
-st.markdown("""
-<div style="background-color: #e2e8f0; padding: 15px; border-radius: 5px; font-size: 0.9em; margin-bottom: 20px;">
-    <strong>Methodological Stance:</strong> This system employs a <em>Hybrid Classification Architecture</em> optimized for decision support.
-    <ul>
-        <li><strong>Broadcast Isolation:</strong> High-frequency industry markers (e.g., <em>#luxuryhotel</em>) are methodologically isolated as <em>Generic / Lifestyle</em> to prevent the artificial inflation of brand-specific equity metrics.</li>
-        <li><strong>Ambiguity as Strategy:</strong> <em>"Ambient / Low-Signal"</em> is treated as valid Strategic Restraint. Abstract tokens (e.g., visual descriptors) are retained to capture non-verbal signaling.</li>
-        <li><strong>Validation Logic:</strong> System validity is assessed via <strong>Stratified Interpretive Consistency</strong> rather than binary global accuracy, accounting for the intentional preservation of ambiguity in low-signal zones.</li>
-    </ul>
-</div>
-""", unsafe_allow_html=True)
-
-# 2. CALCULATE RESEARCH METRICS
-ai_active = df_raw[df_raw["AI_Theme"].notna()]
-if not ai_active.empty:
-    agreement = len(ai_active[ai_active["Rule_Theme"] == ai_active["AI_Theme"]])
-    consensus_rate = (agreement / len(ai_active)) * 100
-    correction_rate = 100 - consensus_rate
-else:
-    consensus_rate = 100; correction_rate = 0
-
-ambient_rate = (len(df_raw[df_raw["Final_Theme"].str.contains("Ambient|Ambiguous", na=False)]) / len(df_raw)) * 100
-
-# 3. DISPLAY DIAGNOSTIC METRICS
-m1, m2, m3 = st.columns(3)
-m1.metric("Structural Stability", f"{consensus_rate:.1f}%", help="Proportion of signals where deterministic rules and AI converged (indicates standard industry lexicon).")
-m2.metric("Contextual Uplift", f"{correction_rate:.1f}%", help="Proportion where AI overrode rigid rules to correct context (e.g. distinguishing seasonal events).")
-m3.metric("Implicit Signal Volume", f"{ambient_rate:.1f}%", help="Volume of signals deliberately preserved as 'Ambient' (Strategic Restraint).")
-
-# 4. STRATIFIED AUDIT TABLE
-# Define Logic Archetypes for Sampling
-def assign_archetype_label(row):
-    rule = str(row["Rule_Theme"])
-    ai = str(row["AI_Theme"])
-    final = str(row["Final_Theme"])
-    
-    if pd.isna(row["AI_Theme"]) or row["AI_Theme"] == "—":
-        return "Control: Frequency Threshold"
-    if "Ambient" in final:
-        return "Test: Ambiguity Preservation"
-    if rule != ai:
-        return "Test: Contextual Override"
-    if "Brand" in final:
-        return "Control: Structural Consensus"
-    return "Control: Standard"
-
-df_raw["Validation Archetype"] = df_raw.apply(assign_archetype_label, axis=1)
-
-# Sample 4 rows from each Archetype
-archetypes = df_raw["Validation Archetype"].unique()
-validation_frames = []
-
-for arch in archetypes:
-    subset = df_raw[df_raw["Validation Archetype"] == arch]
-    if not subset.empty:
-        validation_frames.append(subset.sample(min(4, len(subset)), random_state=42))
-
-if validation_frames:
-    audit_df = pd.concat(validation_frames)
-    
-    # Generate Research-Grade Rationale
-    audit_df["Methodological Rationale"] = audit_df.apply(generate_smart_rationale, axis=1)
-    
-    # Handle Missing AI display values
-    audit_df["AI_Theme"] = audit_df["AI_Theme"].fillna("—")
-    
-    # Display Columns
-    display_cols = {
-        "Hashtag": "Signal (Hashtag)",
-        "Rule_Theme": "Stage 1: Rule",
-        "AI_Theme": "Stage 2: AI",
-        "Final_Theme": "Stage 3: Resolved",
-        "Methodological Rationale": "Methodological Rationale"
+def concentration(tags: pd.Series) -> dict:
+    """Herfindahl index and effective vocabulary size for one hotel's tags."""
+    counts = tags.value_counts()
+    if counts.empty:
+        return {"unique": 0, "hhi": np.nan, "top10_share": np.nan}
+    share = counts / counts.sum()
+    return {
+        "unique": int(counts.size),
+        "hhi": float((share ** 2).sum()),
+        "top10_share": float(counts.head(10).sum() / counts.sum()),
     }
-    
-    st.markdown("#### Stratified Human Audit ($n \\approx 20$)")
-    # UPDATED VALIDATION STATEMENT
-    st.caption("Validation demonstrates high precision in structural categories (e.g., Brand, Location), while divergence is intentionally concentrated in low-signal zones. The system is calibrated as a strategic decision-support tool rather than a rigid taxonomic classifier.")
-    
-    st.dataframe(
-        audit_df[display_cols.keys()].rename(columns=display_cols),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Methodological Rationale": st.column_config.TextColumn("Methodological Rationale", width="large"),
-        }
-    )
-else:
-    st.info("Insufficient data for audit.")
 
-st.caption("Confidential | Generated for Tokyo Luxury Hospitality General Managers Review")
+
+def spearman(x, y):
+    """Rank correlation without a scipy dependency."""
+    pair = pd.DataFrame({"x": x, "y": y}).dropna()
+    if len(pair) < 10 or pair["x"].nunique() < 3:
+        return np.nan, len(pair)
+    return pair["x"].rank().corr(pair["y"].rank()), len(pair)
+
+
+def bar(data, value, label, focal, value_title, fmt=".2f", height=230):
+    """Horizontal bar chart with the focal hotel picked out."""
+    data = data.copy()
+    data["focal"] = data[label] == focal
+    return (
+        alt.Chart(data)
+        .mark_bar(height=17)
+        .encode(
+            x=alt.X(f"{value}:Q", title=value_title,
+                    axis=alt.Axis(grid=True, gridColor=RULE, gridDash=[2, 3],
+                                  domain=False, tickSize=0, labelColor=MUTED,
+                                  titleColor=MUTED, titleFontWeight="normal")),
+            y=alt.Y(f"{label}:N", title=None, sort=HOTEL_ORDER,
+                    axis=alt.Axis(domain=False, tickSize=0, labelColor=INK,
+                                  labelFontSize=12, labelPadding=8)),
+            color=alt.condition(alt.datum.focal, alt.value(ACCENT), alt.value(NEUTRAL)),
+            tooltip=[alt.Tooltip(f"{label}:N", title="Hotel"),
+                     alt.Tooltip(f"{value}:Q", title=value_title, format=fmt)],
+        )
+        .properties(height=height)
+        .configure_view(strokeWidth=0)
+        .configure_axis(labelFont="IBM Plex Sans", titleFont="IBM Plex Sans")
+    )
+
+
+# ----------------------------------------------------------------------------
+# Load
+# ----------------------------------------------------------------------------
+
+posts, long = load_posts(DATA_FILE)
+
+if posts is None:
+    st.error(
+        f"Can't find **{DATA_FILE}**. Put the Apify export in the same folder "
+        "as this script, or change DATA_FILE at the top."
+    )
+    st.stop()
+
+window_label = (
+    f"{posts['date'].min():%B %Y} – {posts['date'].max():%B %Y}"
+)
+
+# ----------------------------------------------------------------------------
+# Header
+# ----------------------------------------------------------------------------
+
+st.markdown("# How Tokyo's luxury hotels use hashtags")
+st.markdown(
+    f"<p class='lede'>A comparison of {len(posts):,} Instagram posts from six "
+    f"Tokyo luxury properties, {window_label}. The question is not who posts "
+    "most, but what each property chooses to make findable.</p>",
+    unsafe_allow_html=True,
+)
+
+focal = st.selectbox(
+    "Read this from the perspective of",
+    HOTEL_ORDER,
+    index=HOTEL_ORDER.index("Park Hyatt Tokyo"),
+)
+
+focal_posts = posts[posts["hotel"] == focal]
+focal_tags = long[long["hotel"] == focal]
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+
+# ----------------------------------------------------------------------------
+# 1. Volume
+# ----------------------------------------------------------------------------
+
+st.markdown("## There is no house style in this market")
+
+volume = (
+    posts.groupby("hotel")
+    .agg(posts=("tag_count", "size"),
+         tags=("tag_count", "sum"),
+         per_post=("tag_count", "mean"),
+         untagged=("tag_count", lambda s: (s == 0).mean() * 100))
+    .reset_index()
+)
+
+low = volume.loc[volume["per_post"].idxmin()]
+high = volume.loc[volume["per_post"].idxmax()]
+focal_row = volume[volume["hotel"] == focal].iloc[0]
+
+st.markdown(
+    f"""
+Tagging practice across these six properties spans a factor of
+{high['per_post'] / max(low['per_post'], 0.01):.0f}. {low['hotel']} averages
+{low['per_post']:.2f} hashtags per post; {high['hotel']} averages
+{high['per_post']:.1f}. Both are established luxury properties in the same city
+competing for overlapping guests. Whatever the right number is, the market has
+not converged on it — which means the volume you have settled on is a choice,
+not an industry standard.
+"""
+)
+
+st.altair_chart(bar(volume, "per_post", "hotel", focal, "Hashtags per post"),
+                use_container_width=True)
+
+a, b, c = st.columns(3)
+a.markdown(
+    f"<div class='figure'>{focal_row['per_post']:.1f}</div>"
+    f"<div class='figure-label'>hashtags per post at {focal}</div>",
+    unsafe_allow_html=True)
+b.markdown(
+    f"<div class='figure'>{focal_row['untagged']:.0f}%</div>"
+    f"<div class='figure-label'>of its posts carry no hashtag at all</div>",
+    unsafe_allow_html=True)
+c.markdown(
+    f"<div class='figure'>{int(focal_row['posts']):,}</div>"
+    f"<div class='figure-label'>posts in the sample window</div>",
+    unsafe_allow_html=True)
+
+pen = volume[volume["hotel"] == "The Peninsula Tokyo"].iloc[0]
+st.markdown(
+    f"""
+<div class='finding'>
+<strong>The Peninsula runs almost without hashtags.</strong> {pen['untagged']:.0f}%
+of its {int(pen['posts']):,} posts carry none, and the account still draws a
+median of {posts[posts.hotel == 'The Peninsula Tokyo']['likes'].median():.0f}
+likes per post. Its tags sit in the first comment instead, which keeps the
+caption clean while preserving searchability. If you have assumed hashtags are
+obligatory on a luxury account, this is the counter-example in your own
+competitive set.
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# ----------------------------------------------------------------------------
+# 2. Vocabulary discipline
+# ----------------------------------------------------------------------------
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+st.markdown("## Volume is the wrong metric. Repetition is the right one.")
+
+st.markdown(
+    """
+Counting hashtags tells you how loud an account is. It says nothing about
+whether the same language comes back post after post — and repetition is what
+builds a searchable, recognisable brand vocabulary. Two properties can post an
+identical number of tags while one rehearses a tight set and the other improvises
+every time.
+
+The measure below is a concentration index. A high value means a small number of
+tags account for most usage. A low value means the vocabulary is diffuse.
+"""
+)
+
+conc = pd.DataFrame([
+    {"hotel": h, **concentration(long[long["hotel"] == h]["tag"])}
+    for h in HOTEL_ORDER
+])
+conc["entries"] = [len(long[long["hotel"] == h]) for h in conc["hotel"]]
+
+st.altair_chart(bar(conc, "hhi", "hotel", focal, "Concentration (Herfindahl)", ".3f"),
+                use_container_width=True)
+
+table = conc[["hotel", "entries", "unique", "hhi", "top10_share"]].copy()
+table.columns = ["Hotel", "Hashtag uses", "Distinct tags",
+                 "Concentration", "Top 10 share"]
+table["Concentration"] = table["Concentration"].map("{:.3f}".format)
+table["Top 10 share"] = (table["Top 10 share"] * 100).map("{:.0f}%".format)
+st.dataframe(table, hide_index=True, use_container_width=True)
+
+janu = conc[conc["hotel"] == "Janu Tokyo"].iloc[0]
+cap = conc[conc["hotel"] == "The Capitol Hotel Tokyu"].iloc[0]
+
+st.markdown(
+    f"""
+<div class='finding'>
+<strong>Janu says the same {int(janu['unique'])} things every time.</strong>
+Across {int(janu['entries'])} hashtag uses it draws on {int(janu['unique'])}
+distinct tags, and its top ten account for {janu['top10_share'] * 100:.0f}% of
+all usage. The Capitol Hotel Tokyu spreads {int(cap['entries']):,} uses across
+{int(cap['unique']):,} distinct tags. Janu opened in 2024; that discipline is a
+launch decision, and it is the cheapest one on this page to copy.
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+st.markdown(f"### What {focal} actually repeats")
+top_tags = (
+    focal_tags["tag"].value_counts().head(12)
+    .rename_axis("Hashtag").reset_index(name="Uses")
+)
+top_tags["Share of all uses"] = (
+    top_tags["Uses"] / len(focal_tags) * 100
+).map("{:.1f}%".format)
+st.dataframe(top_tags, hide_index=True, use_container_width=True)
+
+# ----------------------------------------------------------------------------
+# 3. Does tagging more work?
+# ----------------------------------------------------------------------------
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+st.markdown("## More hashtags does not mean more engagement")
+
+rows = []
+for hotel in HOTEL_ORDER:
+    sub = posts[posts["hotel"] == hotel]
+    r_likes, n = spearman(sub["tag_count"], sub["likes"])
+    r_comments, _ = spearman(sub["tag_count"], sub["comments"])
+    rows.append({"hotel": hotel, "likes": r_likes,
+                 "comments": r_comments, "n": n})
+corr = pd.DataFrame(rows)
+
+st.markdown(
+    """
+Each bar is the relationship between how many hashtags a post carries and how
+much engagement it receives, measured within that hotel's own account. Comparing
+across hotels would only measure who has more followers, so every correlation
+below is internal to one property.
+"""
+)
+
+melted = corr.melt(id_vars="hotel", value_vars=["likes", "comments"],
+                   var_name="metric", value_name="rho")
+melted["metric"] = melted["metric"].str.title()
+
+chart = (
+    alt.Chart(melted)
+    .mark_bar(height=13)
+    .encode(
+        x=alt.X("rho:Q", title="Rank correlation with hashtag count",
+                scale=alt.Scale(domain=[-0.35, 0.35]),
+                axis=alt.Axis(grid=True, gridColor=RULE, gridDash=[2, 3],
+                              domain=False, tickSize=0, labelColor=MUTED,
+                              titleColor=MUTED, titleFontWeight="normal")),
+        y=alt.Y("hotel:N", title=None, sort=HOTEL_ORDER,
+                axis=alt.Axis(domain=False, tickSize=0, labelColor=INK,
+                              labelFontSize=12, labelPadding=8)),
+        yOffset=alt.YOffset("metric:N"),
+        color=alt.Color("metric:N",
+                        scale=alt.Scale(domain=["Likes", "Comments"],
+                                        range=[ACCENT, NEUTRAL]),
+                        legend=alt.Legend(title=None, orient="top",
+                                          labelColor=MUTED)),
+        tooltip=["hotel", "metric", alt.Tooltip("rho:Q", format=".3f")],
+    )
+    .properties(height=260)
+    .configure_view(strokeWidth=0)
+    .configure_axis(labelFont="IBM Plex Sans", titleFont="IBM Plex Sans")
+)
+st.altair_chart(chart, use_container_width=True)
+
+aman_c = corr[corr["hotel"] == "Aman Tokyo"]["comments"].iloc[0]
+st.markdown(
+    f"""
+<div class='finding'>
+<strong>The pattern splits by account, and it splits by metric.</strong>
+At Janu, Park Hyatt and the Capitol, posts with more hashtags attract modestly
+more likes. At Aman and the Ritz-Carlton the effect on likes is flat — and at
+Aman, heavily tagged posts draw measurably <em>fewer</em> comments
+(rho = {aman_c:.2f}). Reach and conversation are not the same outcome, and
+adding tags appears to trade one for the other on the most established accounts.
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    "<p class='note'>These are correlations across observational data, not "
+    "experiments. A post's subject, timing and format all move engagement too, "
+    "and none of them are controlled here.</p>",
+    unsafe_allow_html=True,
+)
+
+# ----------------------------------------------------------------------------
+# 4. Format
+# ----------------------------------------------------------------------------
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+st.markdown("## Video is the weakest format in this set")
+
+fmt = (
+    posts.groupby("format")
+    .agg(posts=("likes", "size"), median_likes=("likes", "median"),
+         median_comments=("comments", "median"))
+    .reset_index().sort_values("median_likes", ascending=False)
+)
+
+fmt_chart = (
+    alt.Chart(fmt)
+    .mark_bar(height=26)
+    .encode(
+        x=alt.X("median_likes:Q", title="Median likes",
+                axis=alt.Axis(grid=True, gridColor=RULE, gridDash=[2, 3],
+                              domain=False, tickSize=0, labelColor=MUTED,
+                              titleColor=MUTED, titleFontWeight="normal")),
+        y=alt.Y("format:N", title=None, sort="-x",
+                axis=alt.Axis(domain=False, tickSize=0, labelColor=INK,
+                              labelFontSize=12, labelPadding=8)),
+        color=alt.value(ACCENT),
+        tooltip=["format", "posts", "median_likes", "median_comments"],
+    )
+    .properties(height=150)
+    .configure_view(strokeWidth=0)
+    .configure_axis(labelFont="IBM Plex Sans", titleFont="IBM Plex Sans")
+)
+st.altair_chart(fmt_chart, use_container_width=True)
+
+mix = pd.crosstab(posts["hotel"], posts["format"], normalize="index") * 100
+focal_video = mix.loc[focal, "Video"] if "Video" in mix.columns else 0
+
+st.markdown(
+    f"""
+Single images draw a median of {fmt[fmt.format == 'Image']['median_likes'].iloc[0]:.0f}
+likes, carousels {fmt[fmt.format == 'Carousel']['median_likes'].iloc[0]:.0f}, and
+video {fmt[fmt.format == 'Video']['median_likes'].iloc[0]:.0f}. That inverts the
+usual advice, and it inverts published findings from hotel Instagram research in
+other markets. {focal} currently runs {focal_video:.0f}% video.
+
+One caveat worth stating plainly: this sample covers feed posts only. Reels are
+excluded, so this compares video *within the feed* against stills, not the whole
+video strategy.
+"""
+)
+
+st.dataframe(
+    mix.round(1).reset_index().rename(columns={"hotel": "Hotel"}),
+    hide_index=True, use_container_width=True,
+)
+
+# ----------------------------------------------------------------------------
+# 5. Language
+# ----------------------------------------------------------------------------
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+st.markdown("## Who each property is tagging for")
+
+script = pd.crosstab(long["hotel"], long["script"], normalize="index") * 100
+script = script.reset_index()
+
+script_chart = (
+    alt.Chart(script.melt(id_vars="hotel", var_name="script", value_name="pct"))
+    .mark_bar(height=20)
+    .encode(
+        x=alt.X("pct:Q", stack="normalize", title=None,
+                axis=alt.Axis(format="%", grid=False, domain=False,
+                              tickSize=0, labelColor=MUTED)),
+        y=alt.Y("hotel:N", title=None, sort=HOTEL_ORDER,
+                axis=alt.Axis(domain=False, tickSize=0, labelColor=INK,
+                              labelFontSize=12, labelPadding=8)),
+        color=alt.Color("script:N",
+                        scale=alt.Scale(domain=["Japanese", "Latin"],
+                                        range=[ACCENT, NEUTRAL]),
+                        legend=alt.Legend(title=None, orient="top",
+                                          labelColor=MUTED)),
+        tooltip=["hotel", "script", alt.Tooltip("pct:Q", format=".1f")],
+    )
+    .properties(height=230)
+    .configure_view(strokeWidth=0)
+    .configure_axis(labelFont="IBM Plex Sans", titleFont="IBM Plex Sans")
+)
+st.altair_chart(script_chart, use_container_width=True)
+
+jp_share = script.set_index("hotel")["Japanese"]
+st.markdown(
+    f"""
+Most of the set sits between {jp_share.drop('Janu Tokyo').min():.0f}% and
+{jp_share.max():.0f}% Japanese-script hashtags — a roughly even split between the
+domestic guest and the inbound traveller. Janu is the outlier at
+{jp_share['Janu Tokyo']:.0f}%, tagging almost entirely in Latin script.
+
+This matters more in Tokyo than it would elsewhere. Japanese Instagram users
+search by hashtag at a far higher rate than the global average, so the script you
+tag in determines which of the two audiences can find the post at all. For most
+properties here it is an even hedge. It is worth knowing whether that was decided
+or inherited.
+"""
+)
+
+# ----------------------------------------------------------------------------
+# 6. Data hygiene
+# ----------------------------------------------------------------------------
+
+invisible = long[long["invisible"]]
+if len(invisible) > 0:
+    st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+    st.markdown("## One account is splitting its own brand tag in half")
+
+    by_hotel = invisible.groupby("hotel").size().sort_values(ascending=False)
+    worst = by_hotel.index[0]
+    worst_n = int(by_hotel.iloc[0])
+    worst_total = len(long[long["hotel"] == worst])
+
+    st.markdown(
+        f"""
+{worst_n} of {worst}'s {worst_total:,} hashtag uses
+({worst_n / worst_total * 100:.0f}%) contain an invisible Unicode character —
+U+2060, a word joiner — appended to the end of the tag. It is not visible in the
+caption, and it almost certainly arrives by pasting copy from a document or
+design file rather than typing it.
+
+The consequence is that the same brand tag is being published as two different
+tags. Below, each pair reads identically on screen but is stored, and searched,
+separately.
+"""
+    )
+
+    w = long[(long["hotel"] == worst)].copy()
+    pairs = []
+    for tag in w[w["invisible"]]["tag"].value_counts().head(6).index:
+        clean_n = int(((w["tag"] == tag) & (~w["invisible"])).sum())
+        dirty_n = int(((w["tag"] == tag) & (w["invisible"])).sum())
+        if clean_n and dirty_n:
+            pairs.append({
+                "Hashtag": f"#{tag}",
+                "Typed normally": clean_n,
+                "With hidden character": dirty_n,
+                "Share going to the broken version":
+                    f"{dirty_n / (clean_n + dirty_n) * 100:.0f}%",
+            })
+    if pairs:
+        st.dataframe(pd.DataFrame(pairs), hide_index=True,
+                     use_container_width=True)
+
+    st.markdown(
+        f"""
+<div class='finding'>
+<strong>What to do about it.</strong> Search each of those tags on Instagram, once
+typed by hand and once pasted from your caption template. If the two return
+different result sets, the tag is being fragmented and roughly half of
+{worst}'s brand-tag usage is landing somewhere no one searches. The fix is to
+retype the hashtag block once, save it as plain text, and stop pasting it from
+formatted sources.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+# ----------------------------------------------------------------------------
+# Method
+# ----------------------------------------------------------------------------
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+st.markdown("## How this was built")
+
+st.markdown(
+    f"""
+<p class='note'>
+{len(posts):,} feed posts from six Tokyo luxury hotel Instagram accounts,
+published {window_label}, collected from public profile pages via the Apify
+Instagram Scraper. Hashtags are read from post captions; reels and stories are
+not included, and neither are hashtags placed in comments, which means figures
+for accounts that tag in the first comment understate their true usage.
+</p>
+<p class='note'>
+Engagement is likes and comments as displayed publicly. Follower counts are not
+available through this method, so no cross-account engagement rate is computed
+and all correlations are calculated within a single account. Every relationship
+shown is observational and correlational; none of it establishes cause.
+</p>
+<p class='note'>
+The Four Seasons Hotel Tokyo at Marunouchi was part of the original design and
+was excluded: its account's public history begins in February 2026, leaving no
+overlap with the study window.
+</p>
+""",
+    unsafe_allow_html=True,
+)
