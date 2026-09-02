@@ -585,7 +585,94 @@ or inherited.
 )
 
 # ----------------------------------------------------------------------------
-# 6. Data hygiene
+# 6. What each property makes findable
+# ----------------------------------------------------------------------------
+
+CATEGORY_FILE = Path(__file__).resolve().parent / "hashtag_categories.csv"
+
+if CATEGORY_FILE.exists():
+    codes = pd.read_csv(CATEGORY_FILE)[["tag", "category", "confidence"]]
+    coded = long.merge(codes, on="tag", how="left")
+    coded["category"] = coded["category"].fillna("Unclassifiable")
+
+    st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+    st.markdown("## What each property makes findable")
+
+    st.markdown(
+        """
+Volume and repetition describe how an account tags. This describes what it tags
+about. Every distinct hashtag was assigned to one of six categories against a
+written codebook, and the mix below is the share of each hotel's total hashtag
+usage falling in each.
+"""
+    )
+
+    order = ["Brand", "Place", "Facility and service",
+             "Experience and lifestyle", "Season and event",
+             "Generic reach", "Unclassifiable"]
+    palette = ["#2E5248", "#5B7F6F", "#8FA79A", "#B9C4B4",
+               "#D6CFBE", "#C3B49B", "#E0DCD3"]
+
+    mix_tbl = pd.crosstab(coded["hotel"], coded["category"], normalize="index") * 100
+    mix_long = mix_tbl.reset_index().melt(
+        id_vars="hotel", var_name="category", value_name="pct")
+
+    cat_chart = (
+        alt.Chart(mix_long)
+        .mark_bar(height=22)
+        .encode(
+            x=alt.X("pct:Q", stack="normalize", title=None,
+                    axis=alt.Axis(format="%", grid=False, domain=False,
+                                  tickSize=0, labelColor=MUTED)),
+            y=alt.Y("hotel:N", title=None, sort=HOTEL_ORDER,
+                    axis=alt.Axis(domain=False, tickSize=0, labelColor=INK,
+                                  labelFontSize=12, labelPadding=8)),
+            color=alt.Color("category:N",
+                            scale=alt.Scale(domain=order, range=palette),
+                            legend=alt.Legend(title=None, orient="bottom",
+                                              columns=4, labelColor=MUTED)),
+            order=alt.Order("category:N"),
+            tooltip=["hotel", "category", alt.Tooltip("pct:Q", format=".1f")],
+        )
+        .properties(height=250)
+        .configure_view(strokeWidth=0)
+        .configure_axis(labelFont="IBM Plex Sans", titleFont="IBM Plex Sans")
+    )
+    st.altair_chart(cat_chart, use_container_width=True)
+
+    focal_mix = mix_tbl.loc[focal].sort_values(ascending=False)
+    peers = mix_tbl.drop(index=focal).mean()
+    gaps = (focal_mix - peers).sort_values()
+
+    st.markdown(
+        f"""
+**{focal} against the peer average.** Its largest category is
+{focal_mix.index[0].lower()} at {focal_mix.iloc[0]:.0f}%. Relative to the other
+five, it leans hardest into {gaps.index[-1].lower()}
+({gaps.iloc[-1]:+.0f} points) and does least with {gaps.index[0].lower()}
+({gaps.iloc[0]:+.0f} points).
+"""
+    )
+
+    st.dataframe(
+        mix_tbl.round(1).reset_index().rename(columns={"hotel": "Hotel"}),
+        hide_index=True, use_container_width=True,
+    )
+
+    low_conf = (codes["confidence"].astype(str).str.lower() == "low").mean() * 100
+    st.markdown(
+        f"<p class='note'>Categories were assigned by a large language model "
+        f"(gpt-4o-mini, temperature 0) against the codebook in "
+        f"<code>classify_hashtags.py</code>, then validated against a "
+        f"hand-coded stratified sample. The classification is fixed and stored "
+        f"in <code>hashtag_categories.csv</code> rather than generated at run "
+        f"time, so these figures are reproducible. The model reported low "
+        f"confidence on {low_conf:.0f}% of distinct tags.</p>",
+        unsafe_allow_html=True,
+    )
+
+# ----------------------------------------------------------------------------
+# 7. Data hygiene
 # ----------------------------------------------------------------------------
 
 invisible = long[long["invisible"]]
