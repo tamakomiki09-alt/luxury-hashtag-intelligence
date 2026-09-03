@@ -53,6 +53,9 @@ SHORT = {
     "The Ritz-Carlton, Tokyo": "Ritz-Carlton",
     "The Capitol Hotel Tokyu": "Capitol",
 }
+# Axis labels use the short form: full names get truncated by Vega and the
+# reader loses which bar is which.
+SHORT_ORDER = [SHORT[h] for h in HOTEL_ORDER]
 
 # Construal mapping. Abstract categories describe what a stay means; concrete
 # categories name something you can point at. This is the operational form of
@@ -95,6 +98,9 @@ st.markdown(f"""
   .paper {{ background:#F4F1E9; border-radius:2px; padding:.85rem 1rem;
             font-size:.83rem; color:#4A483F; line-height:1.55; margin-top:.9rem; }}
   .paper b {{ color:{INK}; font-weight:600; }}
+  .practice {{ background:#EDF1EE; border-radius:2px; padding:.85rem 1rem;
+               font-size:.83rem; color:#3C4A44; line-height:1.55; margin-top:.6rem; }}
+  .practice b {{ color:{INK}; font-weight:600; }}
   div[data-testid="stMetricValue"] {{ font-family:'Newsreader',serif; font-weight:400; }}
   #MainMenu, footer, header {{ visibility:hidden; }}
 </style>""", unsafe_allow_html=True)
@@ -198,22 +204,27 @@ def axis_num(title=None, **kw):
 
 
 def axis_cat():
+    # labelOverlap=False forces every category to render; labelLimit stops
+    # Vega truncating names to an ellipsis.
     return alt.Axis(domain=False, tickSize=0, labelColor=INK, labelFontSize=12,
-                    labelPadding=8, labelFont="IBM Plex Sans")
+                    labelPadding=8, labelFont="IBM Plex Sans",
+                    labelLimit=220, labelOverlap=False)
 
 
-def ranked_bar(data, value, value_title, focal=None, fmt=".2f", height=210,
+def ranked_bar(data, value, value_title, focal=None, fmt=".2f", height=230,
                sort_order=None):
     d = data.dropna(subset=[value]).copy()
+    d["house"] = d["hotel"].map(SHORT).fillna(d["hotel"])
     d["_focal"] = d["hotel"] == focal if focal else False
     colour = (alt.condition(alt.datum._focal, alt.value(ACCENT), alt.value(NEUTRAL))
               if focal else alt.value(ACCENT))
-    return (alt.Chart(d).mark_bar(height=16).encode(
+    return (alt.Chart(d).mark_bar(height=18).encode(
         x=alt.X(f"{value}:Q", title=value_title, axis=axis_num()),
-        y=alt.Y("hotel:N", title=None, sort=sort_order or HOTEL_ORDER,
+        y=alt.Y("house:N", title=None, sort=sort_order or SHORT_ORDER,
                 axis=axis_cat()),
         color=colour,
-        tooltip=["hotel", alt.Tooltip(f"{value}:Q", title=value_title, format=fmt)],
+        tooltip=[alt.Tooltip("hotel:N", title="Hotel"),
+                 alt.Tooltip(f"{value}:Q", title=value_title, format=fmt)],
     ).properties(height=height).configure_view(strokeWidth=0))
 
 
@@ -225,7 +236,13 @@ def stat(container, value, label, small=False):
 
 
 def paper_note(text):
+    """Framed for the thesis: which part of the argument this evidence serves."""
     st.markdown(f"<div class='paper'>{text}</div>", unsafe_allow_html=True)
+
+
+def practice_note(text):
+    """Framed for a hotel marketing team: what to do differently on Monday."""
+    st.markdown(f"<div class='practice'>{text}</div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -339,10 +356,18 @@ if view == "Competitive set":
             f"no hashtag at all and still holds a median of {q['med_likes']:.0f} likes. "
             f"Abstention is a live strategy here, not an oversight.</p></div>",
             unsafe_allow_html=True)
-        paper_note("<b>Paper:</b> descriptive answer to RQ1. Establishes hashtag "
-                   "volume as a discretionary brand decision rather than a "
-                   "platform norm — the precondition for reading it as curated "
-                   "visibility rather than routine practice.")
+        paper_note("<b>For the paper.</b> Descriptive answer to RQ1. If six "
+                   "comparable houses in one city had converged on a similar "
+                   "number, hashtag volume would be a platform convention and "
+                   "not worth studying. They have not, so volume is a "
+                   "discretionary brand decision — the precondition for reading "
+                   "it as curated visibility.")
+        practice_note(
+            "<b>For a marketing team.</b> There is no benchmark to hit. If "
+            "someone has told you a luxury account should use a particular "
+            "number of hashtags, this set contradicts it in both directions. "
+            "The useful question is not how many you use, but whether the "
+            "number is a decision anyone actually made.")
 
     # -- Vocabulary ---------------------------------------------------------
     st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
@@ -382,10 +407,21 @@ if view == "Competitive set":
                 f"spreads {int(loose['uses']):,} uses across {int(loose['distinct']):,}. "
                 f"Both are choices; only one compounds.</p></div>",
                 unsafe_allow_html=True)
-        paper_note("<b>Paper:</b> operationalises curated visibility as a "
-                   "measurable property. Concentration separates deliberate "
-                   "curation from sheer volume — the gap the review identifies "
-                   "in studies that count hashtags alone.")
+        paper_note("<b>For the paper.</b> Operationalises curated visibility "
+                   "as something measurable. The Herfindahl index is borrowed "
+                   "from market-concentration analysis: it sums squared shares, "
+                   "so it rises when a few tags carry most of the usage and "
+                   "falls when usage is spread thin. High concentration is "
+                   "curation; low concentration is improvisation. This is the "
+                   "gap the review identifies in studies that count hashtags "
+                   "and stop there.")
+        practice_note(
+            "<b>For a marketing team.</b> A hashtag only builds equity if it is "
+            "reused. A tag used once is a dead end: nobody follows it, it "
+            "accumulates no history, and it makes the account harder to "
+            "recognise. The practical move is a fixed core of roughly ten tags "
+            "on almost every post, with a small rotating layer for seasons and "
+            "outlets — rather than composing a fresh block each time.")
 
     # -- Categories ---------------------------------------------------------
     if categories is not None:
@@ -408,18 +444,23 @@ if view == "Competitive set":
         with c1:
             ml = mix.reset_index().melt(id_vars="hotel", var_name="category",
                                         value_name="pct")
+            ml["house"] = ml["hotel"].map(SHORT)
             st.altair_chart(
-                alt.Chart(ml).mark_bar(height=22).encode(
+                alt.Chart(ml).mark_bar(height=26).encode(
                     x=alt.X("pct:Q", stack="normalize", title=None,
                             axis=axis_num(format="%")),
-                    y=alt.Y("hotel:N", title=None, sort=HOTEL_ORDER, axis=axis_cat()),
+                    y=alt.Y("house:N", title=None, sort=SHORT_ORDER,
+                            axis=axis_cat()),
                     color=alt.Color("category:N",
                                     scale=alt.Scale(domain=order, range=palette),
                                     legend=alt.Legend(title=None, orient="bottom",
-                                                      columns=4, labelColor=MUTED)),
+                                                      columns=2, labelColor=MUTED,
+                                                      labelLimit=220,
+                                                      symbolSize=90)),
                     order=alt.Order("category:N"),
-                    tooltip=["hotel", "category", alt.Tooltip("pct:Q", format=".1f")],
-                ).properties(height=250).configure_view(strokeWidth=0),
+                    tooltip=[alt.Tooltip("hotel:N", title="Hotel"), "category",
+                             alt.Tooltip("pct:Q", format=".1f", title="% of tags")],
+                ).properties(height=330).configure_view(strokeWidth=0),
                 use_container_width=True)
         with c2:
             bl = (mix["Brand philosophy"].idxmax()
@@ -435,10 +476,23 @@ if view == "Competitive set":
                 f"{SHORT.get(gl, '—')} commits the most to the shared discovery stack: "
                 f"reach that belongs to no one in particular.</p></div>",
                 unsafe_allow_html=True)
-            paper_note("<b>Paper:</b> the typology section. Brand, place and "
-                       "experiential tags carry distinct symbolic functions; this "
-                       "is the evidence that rival houses in one destination "
-                       "distribute them differently.")
+            paper_note("<b>For the paper.</b> The typology section. Categories "
+                       "were derived from the observed vocabulary rather than "
+                       "imposed in advance, then coded against a written "
+                       "codebook. Each carries a different symbolic function: "
+                       "property identity asserts who you are, brand philosophy "
+                       "asserts what you stand for, the discovery stack asserts "
+                       "nothing at all. This is the evidence that rival houses "
+                       "in one destination distribute those functions "
+                       "differently.")
+            practice_note(
+                "<b>For a marketing team.</b> Look at your own bar and ask what "
+                "share is doing work only your hotel could do. Property "
+                "identity and brand philosophy tags are yours alone. "
+                "Discovery-stack tags place you in a feed beside every other "
+                "hotel in the city, competing on volume against accounts far "
+                "larger than yours. A high discovery share is not reach — it is "
+                "borrowed traffic on a term you will never own.")
 
         # -- Construal ------------------------------------------------------
         cons = coded[coded["category"].isin(ABSTRACT | CONCRETE)].copy()
@@ -474,11 +528,23 @@ if view == "Competitive set":
                         f"psychological distance sustains luxury value, this is "
                         f"where it becomes visible in daily practice.</p></div>",
                         unsafe_allow_html=True)
-                    paper_note("<b>Paper:</b> the construal-level hypothesis made "
-                               "operational. Abstract tagging is the linguistic "
+                    paper_note("<b>For the paper.</b> The construal-level "
+                               "hypothesis made operational. Construal level "
+                               "theory holds that psychological distance and "
+                               "abstract language reinforce each other, and "
+                               "luxury depends on that distance. Abstract "
+                               "tagging is therefore the observable linguistic "
                                "trace of the symbolic distance the review argues "
                                "luxury brands must protect while remaining "
                                "present on an open platform.")
+                    practice_note(
+                        "<b>For a marketing team.</b> Concrete tags sell a "
+                        "booking; abstract tags build a position. Neither is "
+                        "wrong, but the mix should be deliberate. A house "
+                        "tagging almost entirely in outlets, dates and districts "
+                        "is running a promotions calendar. A house with a real "
+                        "abstract share is building something a competitor "
+                        "cannot copy by opening a similar restaurant.")
 
     # -- Japan: script over time --------------------------------------------
     st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
@@ -527,11 +593,22 @@ if view == "Competitive set":
                 f"Instagram by hashtag at several times the global rate, so the "
                 f"script chosen decides which of two audiences can find the post "
                 f"at all.</p></div>", unsafe_allow_html=True)
-        paper_note("<b>Paper:</b> the destination-specific contribution. Curated "
-                   "visibility in a bilingual inbound market has an axis the "
-                   "existing literature does not model — whom the curation is "
-                   "legible to. The trend runs alongside the inbound recovery "
-                   "described in the introduction.")
+        paper_note("<b>For the paper.</b> The destination-specific "
+                   "contribution, and the part with no precedent in the "
+                   "literature. Curated visibility in a bilingual inbound market "
+                   "has an axis existing models do not include: not how much is "
+                   "made visible, but whom it is legible to. The trend runs "
+                   "alongside the inbound recovery described in the "
+                   "introduction, though this data cannot establish that one "
+                   "caused the other.")
+        practice_note(
+            "<b>For a marketing team.</b> Script is a targeting decision "
+            "disguised as a formatting one. A tag in Japanese is findable by the "
+            "domestic guest and invisible to the inbound one, and the reverse "
+            "holds for Latin script. Whatever your split is, it is allocating "
+            "your discoverability between two audiences — and it is worth "
+            "checking whether that allocation matches where your revenue "
+            "actually comes from.")
 
     # -- Japan: bilingual norm ----------------------------------------------
     ps = post_script.copy()
@@ -544,19 +621,21 @@ if view == "Competitive set":
     with c1:
         mm = mode_mix.reset_index().melt(id_vars="hotel", var_name="mode",
                                          value_name="pct")
+        mm["house"] = mm["hotel"].map(SHORT)
         st.altair_chart(
-            alt.Chart(mm).mark_bar(height=20).encode(
+            alt.Chart(mm).mark_bar(height=24).encode(
                 x=alt.X("pct:Q", stack="normalize", title=None,
                         axis=axis_num(format="%")),
-                y=alt.Y("hotel:N", title=None, sort=HOTEL_ORDER, axis=axis_cat()),
+                y=alt.Y("house:N", title=None, sort=SHORT_ORDER, axis=axis_cat()),
                 color=alt.Color("mode:N",
                                 scale=alt.Scale(domain=["Japanese only", "Mixed",
                                                         "Latin only"],
                                                 range=[ACCENT, "#A9BCB0", WARM]),
                                 legend=alt.Legend(title=None, orient="bottom",
                                                   labelColor=MUTED)),
-                tooltip=["hotel", "mode", alt.Tooltip("pct:Q", format=".1f")],
-            ).properties(height=230).configure_view(strokeWidth=0),
+                tooltip=[alt.Tooltip("hotel:N", title="Hotel"), "mode",
+                         alt.Tooltip("pct:Q", format=".1f", title="% of posts")],
+            ).properties(height=280).configure_view(strokeWidth=0),
             use_container_width=True)
     with c2:
         mixed = mode_mix["Mixed"].mean() if "Mixed" in mode_mix.columns else 0
@@ -569,9 +648,16 @@ if view == "Competitive set":
             f"almost entirely in Latin script; the Peninsula, across its small "
             f"number of tagged posts, leans the other way.</p></div>",
             unsafe_allow_html=True)
-        paper_note("<b>Paper:</b> post-level evidence that audience targeting is "
-                   "resolved inside the post rather than across the account — "
-                   "support for treating the post as the unit of analysis.")
+        paper_note("<b>For the paper.</b> Post-level evidence that audience "
+                   "targeting is resolved inside the post rather than across the "
+                   "account — which is the justification for treating the post, "
+                   "not the account, as the unit of analysis.")
+        practice_note(
+            "<b>For a marketing team.</b> Carrying both scripts in one post is "
+            "the default here, and it is a reasonable hedge. But hedging on "
+            "every post is not the same as a bilingual strategy: it can also "
+            "mean nobody has decided. The two houses that opted out did so "
+            "deliberately, and both can say who their post is for.")
 
     # -- Engagement ---------------------------------------------------------
     st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
@@ -589,20 +675,22 @@ if view == "Competitive set":
     with c1:
         cm2 = corr.melt(id_vars="hotel", var_name="metric",
                         value_name="rho").dropna()
+        cm2["house"] = cm2["hotel"].map(SHORT)
         if len(cm2):
             st.altair_chart(
-                alt.Chart(cm2).mark_bar(height=12).encode(
+                alt.Chart(cm2).mark_bar(height=13).encode(
                     x=alt.X("rho:Q", title="Rank correlation with hashtag count",
                             scale=alt.Scale(domain=[-.35, .35]), axis=axis_num()),
-                    y=alt.Y("hotel:N", title=None, sort=HOTEL_ORDER, axis=axis_cat()),
+                    y=alt.Y("house:N", title=None, sort=SHORT_ORDER, axis=axis_cat()),
                     yOffset=alt.YOffset("metric:N"),
                     color=alt.Color("metric:N",
                                     scale=alt.Scale(domain=["Likes", "Comments"],
                                                     range=[ACCENT, WARM]),
                                     legend=alt.Legend(title=None, orient="top",
                                                       labelColor=MUTED)),
-                    tooltip=["hotel", "metric", alt.Tooltip("rho:Q", format=".3f")],
-                ).properties(height=250).configure_view(strokeWidth=0),
+                    tooltip=[alt.Tooltip("hotel:N", title="Hotel"), "metric",
+                             alt.Tooltip("rho:Q", format=".3f")],
+                ).properties(height=290).configure_view(strokeWidth=0),
                 use_container_width=True)
         else:
             st.info("Too few posts in this window to estimate correlations.")
@@ -617,11 +705,20 @@ if view == "Competitive set":
             "likes are flat while comments fall — reach and conversation are not "
             "the same outcome, and tagging appears to trade one against the "
             "other.</p></div>", unsafe_allow_html=True)
-        paper_note("<b>Paper:</b> the engagement question answered without "
-                   "overclaiming. A null-to-negative result on the most "
-                   "prestigious accounts is what distinguishes luxury from "
-                   "mainstream digital marketing, where reach is treated as an "
-                   "unqualified good.")
+        paper_note("<b>For the paper.</b> The engagement question answered "
+                   "without overclaiming. Rank correlation is used because "
+                   "engagement is heavily skewed and a handful of viral posts "
+                   "would dominate a linear measure. A null-to-negative result "
+                   "on the most prestigious accounts is the finding that "
+                   "distinguishes luxury from mainstream digital marketing, "
+                   "where reach is treated as an unqualified good.")
+        practice_note(
+            "<b>For a marketing team.</b> Adding hashtags is not a free lever. "
+            "On the accounts here with the largest audiences, more tags "
+            "accompany no gain in likes and a fall in comments — the metric that "
+            "actually indicates someone stopped to respond. If your reporting "
+            "treats reach and engagement as the same number, this is the case "
+            "for separating them.")
 
     st.markdown("<p class='note'>Correlational, observational data. Subject, "
                 "timing and format all move engagement, and none are controlled "
