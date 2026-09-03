@@ -24,7 +24,7 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 
 HERE = Path(__file__).resolve().parent
-DATA_FILE = "dataset_instagram-scraper-task-3_2026-09-02_10-51-38-883.csv"
+DATA_FILE = "tokyo_luxury_instagram.csv"
 CATEGORY_FILE = HERE / "hashtag_categories.csv"
 
 # Two sample windows. The full window maximises observations; the matched
@@ -119,7 +119,7 @@ def find_data_file(preferred: str):
     for c in (HERE / preferred, Path.cwd() / preferred):
         if c.exists():
             return c
-    for pattern in ("dataset_instagram-scraper*.csv", "*.csv"):
+    for pattern in ("tokyo_luxury_instagram.csv", "dataset_instagram-scraper*.csv", "*.csv"):
         hits = [p for p in sorted(HERE.glob(pattern)) if p.name != CATEGORY_FILE.name]
         if hits:
             return max(hits, key=lambda p: p.stat().st_size)
