@@ -808,11 +808,13 @@ def _api_key():
     """Key from Streamlit secrets, falling back to the environment."""
     try:
         if "OPENAI_API_KEY" in st.secrets:
-            return st.secrets["OPENAI_API_KEY"]
+            raw_key = str(st.secrets["OPENAI_API_KEY"])
+            return raw_key.strip().strip('"').strip("'")
     except Exception:            # no secrets.toml locally
         pass
     import os
-    return os.environ.get("OPENAI_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY")
+    return key.strip().strip('"').strip("'") if key else None
 
 
 st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
@@ -854,6 +856,10 @@ with st.expander("Coding tools — build the hashtag classification"):
     st.markdown("#### 2 · Run the classifier")
 
     key = _api_key()
+    if key:
+        st.markdown(
+            f"<p class='note'>Key loaded: <code>{key[:7]}…{key[-4:]}</code> "
+            f"({len(key)} characters).</p>", unsafe_allow_html=True)
     if not key:
         st.warning("No OPENAI_API_KEY found. Add it under Manage app → Settings → "
                    "Secrets as:  OPENAI_API_KEY = \"sk-...\"")
@@ -863,6 +869,29 @@ with st.expander("Coding tools — build the hashtag classification"):
             f"codebook in classify_hashtags.py, in batches of {ch.BATCH_SIZE} at "
             f"temperature 0. A few minutes and a few cents on "
             f"{ch.MODEL}.</p>", unsafe_allow_html=True)
+
+        test = st.button("Test the connection")
+        if test:
+            try:
+                from openai import OpenAI
+                probe = OpenAI(api_key=key)
+                probe_tags = ["amantokyo", "赤坂", "afternoontea", "luxuryispersonal"]
+                reply = ch.classify_batch(probe, probe_tags)
+                st.success(f"Connection works — {len(reply)} of "
+                           f"{len(probe_tags)} tags parsed.")
+                st.dataframe(
+                    pd.DataFrame([{"Hashtag": f"#{t}", "Category": v[0],
+                                   "Confidence": v[1]}
+                                  for t, v in reply.items()]),
+                    hide_index=True, use_container_width=True)
+            except Exception as exc:                       # noqa: BLE001
+                st.error(f"**{type(exc).__name__}**\n\n{exc}")
+                st.markdown(
+                    "<p class='note'>Common causes: the key has been revoked or "
+                    "is from a different account; the account has no credit "
+                    "(OpenAI billing is separate from a ChatGPT subscription); "
+                    "or the key was pasted with a stray quote or newline.</p>",
+                    unsafe_allow_html=True)
 
         if st.button("Classify hashtags", type="primary"):
             try:
@@ -874,32 +903,61 @@ with st.expander("Coding tools — build the hashtag classification"):
                 client = OpenAI(api_key=key)
                 todo = list(tag_counts["tag"])
                 done, failed = {}, 0
+                first_error = None
+                consecutive = 0
+                aborted = False
                 bar = st.progress(0.0, text="Starting…")
 
                 for start in range(0, len(todo), ch.BATCH_SIZE):
                     batch = todo[start:start + ch.BATCH_SIZE]
                     try:
                         result = ch.classify_batch(client, batch)
-                    except Exception:
+                        consecutive = 0
+                    except Exception as exc:               # noqa: BLE001
+                        if first_error is None:
+                            first_error = f"{type(exc).__name__}: {exc}"
                         failed += len(batch)
+                        consecutive += 1
                         result = {}
+                        # Three failures in a row means the problem is the
+                        # connection, not the batch. Stop rather than burn
+                        # through every remaining request.
+                        if consecutive >= 3:
+                            aborted = True
+                            break
                     for tag in batch:
-                        entry = result.get(tag) or {}
-                        cat = entry.get("category", "Unclassifiable")
-                        if cat not in ch.CATEGORIES:
-                            cat = "Unclassifiable"
-                        done[tag] = (cat, entry.get("confidence", "low"))
+                        done[tag] = result.get(tag, ("Unclassifiable", "low"))
                     seen = min(start + ch.BATCH_SIZE, len(todo))
                     bar.progress(seen / len(todo), text=f"{seen:,} of {len(todo):,}")
 
                 bar.empty()
-                out = tag_counts.copy()
-                out["category"] = out["tag"].map(lambda t: done.get(t, ("Unclassifiable",))[0])
-                out["confidence"] = out["tag"].map(lambda t: done.get(t, (None, "low"))[1])
-                st.session_state["classified"] = out
-                if failed:
-                    st.warning(f"{failed} tags fell back to Unclassifiable after a "
-                               f"failed request. Re-run to retry them.")
+
+                if aborted or (first_error and failed == len(todo)):
+                    st.error(
+                        "Classification stopped — the API is not responding.\n\n"
+                        f"First error was:\n\n`{first_error}`")
+                    st.markdown(
+                        "<p class='note'>Nothing was saved. Fix the key or "
+                        "billing, then run it again. Use <b>Test the "
+                        "connection</b> above to check before a full run.</p>",
+                        unsafe_allow_html=True)
+                else:
+                    out = tag_counts.copy()
+                    out["category"] = out["tag"].map(
+                        lambda t: done.get(t, ("Unclassifiable",))[0])
+                    out["confidence"] = out["tag"].map(
+                        lambda t: done.get(t, (None, "low"))[1])
+                    real = (out["category"] != "Unclassifiable").mean()
+                    if real < 0.2:
+                        st.error(
+                            "Nearly everything came back Unclassifiable, so the "
+                            "run did not work. Don't use this file. Press "
+                            "**Test the connection** above to see the reply.")
+                    st.session_state["classified"] = out
+                    if failed:
+                        st.warning(
+                            f"{failed} tags fell back to Unclassifiable after a "
+                            f"failed request ({first_error}). Re-run to retry.")
 
     if "classified" in st.session_state:
         out = st.session_state["classified"]
