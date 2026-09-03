@@ -204,7 +204,7 @@ def axis_cat():
 
 def ranked_bar(data, value, value_title, focal=None, fmt=".2f", height=210,
                sort_order=None):
-    d = data.copy()
+    d = data.dropna(subset=[value]).copy()
     d["_focal"] = d["hotel"] == focal if focal else False
     colour = (alt.condition(alt.datum._focal, alt.value(ACCENT), alt.value(NEUTRAL))
               if focal else alt.value(ACCENT))
@@ -265,6 +265,18 @@ if view == "Single property":
     focal = st.selectbox("Property", HOTEL_ORDER,
                          index=HOTEL_ORDER.index("Park Hyatt Tokyo"))
 
+# A Herfindahl index over a handful of observations is not interpretable, and
+# neither is a rank correlation. MIN_USES gates the concentration figures.
+MIN_USES = 40
+
+if len(posts) < 600:
+    st.warning(
+        f"This window holds {len(posts):,} posts and {len(long):,} hashtag uses. "
+        "It is the robustness check, not the primary analysis — hotels with very "
+        "few tagged posts are flagged below and some statistics are withheld. "
+        "Switch to the full window for the headline figures."
+    )
+
 st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
 
 # Shared frames -------------------------------------------------------------
@@ -279,7 +291,8 @@ volume = (posts.groupby("hotel")
 vocab = pd.DataFrame([{
     "hotel": h,
     "distinct": int(long[long["hotel"] == h]["tag"].nunique()),
-    "hhi": herfindahl(long[long["hotel"] == h]["tag"]),
+    "hhi": (herfindahl(long[long["hotel"] == h]["tag"])
+            if (long["hotel"] == h).sum() >= MIN_USES else np.nan),
     "uses": int((long["hotel"] == h).sum()),
 } for h in HOTEL_ORDER])
 
@@ -340,21 +353,35 @@ if view == "Competitive set":
                                    fmt=".3f"), use_container_width=True)
         show = vocab.rename(columns={"hotel": "Hotel", "distinct": "Distinct tags",
                                      "hhi": "Concentration", "uses": "Hashtag uses"})
-        show["Concentration"] = show["Concentration"].map("{:.3f}".format)
+        show["Concentration"] = show["Concentration"].map(
+            lambda v: "—" if pd.isna(v) else f"{v:.3f}")
         st.dataframe(show, hide_index=True, use_container_width=True)
+        if vocab["hhi"].isna().any():
+            st.markdown(
+                f"<p class='note'>Concentration is withheld (—) for hotels with "
+                f"fewer than {MIN_USES} hashtag uses in this window; the index is "
+                f"not meaningful on a handful of observations.</p>",
+                unsafe_allow_html=True)
     with c2:
-        tight = vocab.loc[vocab["hhi"].idxmax()]
-        loose = vocab.loc[vocab["hhi"].idxmin()]
-        st.markdown(
-            f"<div class='read'>"
-            f"<p>Counting tags measures how loud an account is. Concentration "
-            f"measures whether the same language returns post after post — which "
-            f"is what accumulates into a searchable brand vocabulary.</p>"
-            f"<p>{SHORT[tight['hotel']]} draws on {int(tight['distinct'])} distinct "
-            f"tags across {int(tight['uses']):,} uses. {SHORT[loose['hotel']]} "
-            f"spreads {int(loose['uses']):,} uses across {int(loose['distinct']):,}. "
-            f"Both are choices; only one compounds.</p></div>",
-            unsafe_allow_html=True)
+        usable = vocab.dropna(subset=["hhi"])
+        if len(usable) < 2:
+            st.info(f"Too few hashtag uses in this window to compare "
+                    f"concentration. Hotels need at least {MIN_USES} uses.")
+            tight = loose = None
+        else:
+            tight = usable.loc[usable["hhi"].idxmax()]
+            loose = usable.loc[usable["hhi"].idxmin()]
+        if tight is not None:
+            st.markdown(
+                f"<div class='read'>"
+                f"<p>Counting tags measures how loud an account is. Concentration "
+                f"measures whether the same language returns post after post — which "
+                f"is what accumulates into a searchable brand vocabulary.</p>"
+                f"<p>{SHORT[tight['hotel']]} draws on {int(tight['distinct'])} distinct "
+                f"tags across {int(tight['uses']):,} uses. {SHORT[loose['hotel']]} "
+                f"spreads {int(loose['uses']):,} uses across {int(loose['distinct']):,}. "
+                f"Both are choices; only one compounds.</p></div>",
+                unsafe_allow_html=True)
         paper_note("<b>Paper:</b> operationalises curated visibility as a "
                    "measurable property. Concentration separates deliberate "
                    "curation from sheer volume — the gap the review identifies "
@@ -462,7 +489,10 @@ if view == "Competitive set":
     q = (qt.assign(is_jp=qt["script"].eq("Japanese"))
          .groupby("quarter").agg(jp_pct=("is_jp", lambda s: s.mean() * 100),
                                  n=("is_jp", "size")).reset_index())
-    q = q[q["n"] >= 100]
+    q = q[q["n"] >= 100].copy()
+    # Vega's time format has no quarter token, so build the label ourselves.
+    q["label"] = (q["quarter"].dt.year.astype(str) + " Q"
+                  + q["quarter"].dt.quarter.astype(str))
 
     c1, c2 = st.columns([3, 2], gap="large")
     with c1:
@@ -472,10 +502,11 @@ if view == "Competitive set":
                     color=ACCENT, strokeWidth=2,
                     point=alt.OverlayMarkDef(color=ACCENT, size=34)
                 ).encode(
-                    x=alt.X("quarter:T", title=None, axis=axis_num(format="%Y Q%q")),
+                    x=alt.X("label:N", title=None, sort=list(q["label"]),
+                            axis=axis_cat()),
                     y=alt.Y("jp_pct:Q", title="Japanese-script tags (%)",
                             scale=alt.Scale(zero=False), axis=axis_num()),
-                    tooltip=[alt.Tooltip("quarter:T", format="%Y Q%q"),
+                    tooltip=[alt.Tooltip("label:N", title="Quarter"),
                              alt.Tooltip("jp_pct:Q", format=".1f"),
                              alt.Tooltip("n:Q", title="tags")],
                 ).properties(height=260).configure_view(strokeWidth=0),
@@ -488,8 +519,8 @@ if view == "Competitive set":
             st.markdown(
                 f"<div class='read'>"
                 f"<p>Japanese-script tagging peaked at {peak['jp_pct']:.0f}% in "
-                f"{peak['quarter']:%Y Q%q} and stands at {last['jp_pct']:.0f}% by "
-                f"{last['quarter']:%Y Q%q} — a swing of "
+                f"{peak['label']} and stands at {last['jp_pct']:.0f}% by "
+                f"{last['label']} — a swing of "
                 f"{peak['jp_pct'] - last['jp_pct']:.0f} points toward Latin script "
                 f"across the whole set.</p>"
                 f"<p>Script is not decoration in this market. Japanese users search "
@@ -613,14 +644,20 @@ if view == "Competitive set":
             ).properties(height=150).configure_view(strokeWidth=0),
             use_container_width=True)
     with c2:
+        ranking = " → ".join(f"{r['format']} ({r['median_likes']:.0f})"
+                             for _, r in fmt.iterrows())
+        video_rank = (list(fmt["format"]).index("Video") + 1
+                      if "Video" in list(fmt["format"]) else None)
+        video_line = (
+            f"Video ranks {video_rank} of {len(fmt)} on median likes here."
+            if video_rank else "")
         st.markdown(
-            "<div class='read'>"
-            "<p>Single images outperform carousels, and both outperform video. "
-            "That inverts published findings from hotel Instagram research in "
-            "other markets.</p>"
-            "<p>One caveat, stated plainly: this sample is feed posts only. Reels "
-            "are excluded, so this compares video inside the feed against stills, "
-            "not the whole video strategy.</p></div>", unsafe_allow_html=True)
+            f"<div class='read'>"
+            f"<p>By median likes: {ranking}. {video_line}</p>"
+            f"<p>One caveat, stated plainly: this sample is feed posts only. "
+            f"Reels are excluded, so this compares video inside the feed against "
+            f"stills, not the whole video strategy.</p></div>",
+            unsafe_allow_html=True)
 
 # ===========================================================================
 # SINGLE PROPERTY
