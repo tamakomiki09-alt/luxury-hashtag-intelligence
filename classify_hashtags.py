@@ -188,11 +188,61 @@ def load_tags() -> pd.DataFrame:
 # Classification
 # ---------------------------------------------------------------------------
 
+def normalise(tag: str) -> str:
+    """Key used to match the model's reply back to the tag we asked about."""
+    return "".join(c for c in str(tag) if unicodedata.category(c) != "Cf") \
+        .strip().lstrip("#").lower()
+
+
+def parse_batch_response(payload: str, tags: list[str]) -> dict:
+    """Pull {tag: (category, confidence)} out of whatever shape came back.
+
+    Models wrap JSON object responses inconsistently — sometimes a flat map,
+    sometimes {"hashtags": {...}}, sometimes a list of records. Rather than
+    depend on one shape, find the tags wherever they are.
+    """
+    data = json.loads(payload)
+    wanted = {normalise(t): t for t in tags}
+    found: dict[str, tuple[str, str]] = {}
+
+    def record(key, value):
+        original = wanted.get(normalise(key))
+        if original is None:
+            return
+        if isinstance(value, dict):
+            category = value.get("category") or value.get("label") or ""
+            confidence = value.get("confidence") or "medium"
+        else:
+            category, confidence = str(value), "medium"
+        if category in CATEGORIES:
+            found[original] = (category, str(confidence).lower())
+
+    def walk(node):
+        if isinstance(node, dict):
+            # A record carrying its own tag, e.g. {"tag": x, "category": y}
+            label = node.get("tag") or node.get("hashtag") or node.get("name")
+            if label is not None and ("category" in node or "label" in node):
+                record(label, node)
+                return
+            for key, value in node.items():
+                record(key, value)
+                if isinstance(value, (dict, list)):
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return found
+
+
 def classify_batch(client, tags: list[str]) -> dict:
+    """Return {tag: (category, confidence)} for one batch."""
     payload = json.dumps(tags, ensure_ascii=False)
     user = (
-        "Classify each hashtag below. Return a JSON object mapping each tag "
-        'exactly as given to {"category": "...", "confidence": "..."}.\n\n'
+        "Classify each hashtag in this list. Return a JSON object whose keys "
+        "are the hashtags exactly as given, and whose values are objects with "
+        '"category" and "confidence". No wrapper key, no other text.\n\n'
         f"{payload}"
     )
     response = client.chat.completions.create(
@@ -204,7 +254,12 @@ def classify_batch(client, tags: list[str]) -> dict:
             {"role": "user", "content": user},
         ],
     )
-    return json.loads(response.choices[0].message.content)
+    raw = response.choices[0].message.content
+    parsed = parse_batch_response(raw, tags)
+    if not parsed:
+        # Surface the reply so the failure is diagnosable rather than silent.
+        raise ValueError(f"No tags matched in the reply. First 400 chars: {raw[:400]}")
+    return parsed
 
 
 def run_classification() -> None:
@@ -244,11 +299,7 @@ def run_classification() -> None:
                 continue
 
         for tag in batch:
-            entry = result.get(tag) or {}
-            category = entry.get("category", "Unclassifiable")
-            if category not in CATEGORIES:
-                category = "Unclassifiable"
-            done[tag] = (category, entry.get("confidence", "low"))
+            done[tag] = result.get(tag, ("Unclassifiable", "low"))
 
         pct = min(start + BATCH_SIZE, len(todo)) / len(todo) * 100
         print(f"  {pct:5.1f}%  ({len(done):,} coded)")
