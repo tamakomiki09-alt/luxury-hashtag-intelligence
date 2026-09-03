@@ -801,6 +801,165 @@ else:
                     "sources.</p></div>", unsafe_allow_html=True)
 
 # ===========================================================================
+# Coding tools — run the classifier from the browser
+# ===========================================================================
+
+def _api_key():
+    """Key from Streamlit secrets, falling back to the environment."""
+    try:
+        if "OPENAI_API_KEY" in st.secrets:
+            return st.secrets["OPENAI_API_KEY"]
+    except Exception:            # no secrets.toml locally
+        pass
+    import os
+    return os.environ.get("OPENAI_API_KEY")
+
+
+st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+
+with st.expander("Coding tools — build the hashtag classification"):
+    import classify_hashtags as ch
+
+    tag_counts = (long_all["tag"].value_counts()
+                  .rename_axis("tag").reset_index(name="uses"))
+
+    st.markdown(
+        f"<p class='note'>{len(tag_counts):,} distinct hashtags across the whole "
+        f"dataset. Step one draws a stratified sample for you to code by hand. "
+        f"Step two runs the classifier. Code the sample <b>before</b> running the "
+        f"classifier, or the agreement figure is meaningless.</p>",
+        unsafe_allow_html=True)
+
+    st.markdown("#### 1 · Hand-coding sheet")
+
+    bands = pd.cut(tag_counts["uses"], bins=[0, 1, 5, 25, 10 ** 9],
+                   labels=["1 use", "2-5", "6-25", "26+"])
+    per_band = 75
+    parts = []
+    for band, group in tag_counts.assign(band=bands).groupby("band", observed=True):
+        parts.append(group.sample(min(per_band, len(group)), random_state=7))
+    sample_sheet = (pd.concat(parts, ignore_index=True)
+                    .sample(frac=1, random_state=7).reset_index(drop=True))
+    sample_sheet["my_category"] = ""
+
+    st.download_button(
+        f"Download validation_sample.csv ({len(sample_sheet)} tags)",
+        sample_sheet.to_csv(index=False).encode("utf-8-sig"),
+        file_name="validation_sample.csv", mime="text/csv")
+    st.markdown(
+        "<p class='note'>Open it in Google Sheets, not Excel — Excel will destroy "
+        "the Japanese characters. Fill in <code>my_category</code> using exactly "
+        "one of: " + ", ".join(ch.CATEGORIES) + ".</p>", unsafe_allow_html=True)
+
+    st.markdown("#### 2 · Run the classifier")
+
+    key = _api_key()
+    if not key:
+        st.warning("No OPENAI_API_KEY found. Add it under Manage app → Settings → "
+                   "Secrets as:  OPENAI_API_KEY = \"sk-...\"")
+    else:
+        st.markdown(
+            f"<p class='note'>Classifies all {len(tag_counts):,} tags against the "
+            f"codebook in classify_hashtags.py, in batches of {ch.BATCH_SIZE} at "
+            f"temperature 0. A few minutes and a few cents on "
+            f"{ch.MODEL}.</p>", unsafe_allow_html=True)
+
+        if st.button("Classify hashtags", type="primary"):
+            try:
+                from openai import OpenAI
+            except ImportError:
+                st.error("The openai package is missing. Add `openai>=1.0` to "
+                         "requirements.txt and reboot the app.")
+            else:
+                client = OpenAI(api_key=key)
+                todo = list(tag_counts["tag"])
+                done, failed = {}, 0
+                bar = st.progress(0.0, text="Starting…")
+
+                for start in range(0, len(todo), ch.BATCH_SIZE):
+                    batch = todo[start:start + ch.BATCH_SIZE]
+                    try:
+                        result = ch.classify_batch(client, batch)
+                    except Exception:
+                        failed += len(batch)
+                        result = {}
+                    for tag in batch:
+                        entry = result.get(tag) or {}
+                        cat = entry.get("category", "Unclassifiable")
+                        if cat not in ch.CATEGORIES:
+                            cat = "Unclassifiable"
+                        done[tag] = (cat, entry.get("confidence", "low"))
+                    seen = min(start + ch.BATCH_SIZE, len(todo))
+                    bar.progress(seen / len(todo), text=f"{seen:,} of {len(todo):,}")
+
+                bar.empty()
+                out = tag_counts.copy()
+                out["category"] = out["tag"].map(lambda t: done.get(t, ("Unclassifiable",))[0])
+                out["confidence"] = out["tag"].map(lambda t: done.get(t, (None, "low"))[1])
+                st.session_state["classified"] = out
+                if failed:
+                    st.warning(f"{failed} tags fell back to Unclassifiable after a "
+                               f"failed request. Re-run to retry them.")
+
+    if "classified" in st.session_state:
+        out = st.session_state["classified"]
+        st.success(f"Classified {len(out):,} tags.")
+        summary = (out.groupby("category")
+                   .agg(**{"Distinct tags": ("tag", "size"),
+                           "Total uses": ("uses", "sum")})
+                   .sort_values("Total uses", ascending=False).reset_index()
+                   .rename(columns={"category": "Category"}))
+        st.dataframe(summary, hide_index=True, use_container_width=True)
+        st.download_button(
+            "Download hashtag_categories.csv",
+            out.to_csv(index=False).encode("utf-8-sig"),
+            file_name="hashtag_categories.csv", mime="text/csv", type="primary")
+        st.markdown(
+            "<p class='note'>Upload this file to your GitHub repo (Add file → "
+            "Upload files) next to app.py. The app will pick it up on the next "
+            "reboot and the category and construal sections will appear.</p>",
+            unsafe_allow_html=True)
+
+    st.markdown("#### 3 · Score your agreement")
+    coded_up = st.file_uploader("Your completed validation_sample.csv", type="csv")
+    if coded_up is not None:
+        mine = pd.read_csv(coded_up)
+        model = (st.session_state.get("classified")
+                 if "classified" in st.session_state else categories)
+        if model is None:
+            st.info("Run the classifier first, or commit hashtag_categories.csv.")
+        elif "my_category" not in mine.columns:
+            st.error("That file has no my_category column.")
+        else:
+            mine = mine[mine["my_category"].notna()
+                        & (mine["my_category"].astype(str).str.strip() != "")]
+            merged = mine.merge(model[["tag", "category"]], on="tag", how="inner")
+            if merged.empty:
+                st.error("No coded tags matched the classification.")
+            else:
+                merged["match"] = (merged["my_category"].str.strip().str.lower()
+                                   == merged["category"].str.strip().str.lower())
+                observed = merged["match"].mean()
+                p_mine = merged["my_category"].value_counts(normalize=True)
+                p_model = merged["category"].value_counts(normalize=True)
+                expected = sum(p_mine.get(c, 0) * p_model.get(c, 0)
+                               for c in ch.CATEGORIES)
+                kappa = ((observed - expected) / (1 - expected)
+                         if expected < 1 else float("nan"))
+                a, b = st.columns(2)
+                stat(a, f"{observed * 100:.1f}%", f"agreement over {len(merged)} tags")
+                stat(b, f"{kappa:.3f}", "Cohen's kappa<br>above 0.80 is strong")
+                wrong = merged[~merged["match"]][["tag", "my_category", "category"]]
+                if len(wrong):
+                    st.markdown("**Disagreements** — read these before writing up. "
+                                "A pattern here usually means a codebook definition "
+                                "is unclear, not that the model is wrong.")
+                    st.dataframe(wrong.rename(columns={
+                        "tag": "Hashtag", "my_category": "Your code",
+                        "category": "Model"}), hide_index=True,
+                        use_container_width=True)
+
+# ===========================================================================
 # Method
 # ===========================================================================
 
