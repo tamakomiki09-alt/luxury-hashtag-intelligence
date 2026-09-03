@@ -156,7 +156,7 @@ def strip_invisible(text: str) -> str:
 
 
 def find_data_file() -> Path:
-    for pattern in ("dataset_instagram-scraper*.csv", "*.csv"):
+    for pattern in ("tokyo_luxury_instagram.csv", "dataset_instagram-scraper*.csv", "*.csv"):
         matches = [p for p in sorted(HERE.glob(pattern))
                    if p.name not in {OUTPUT.name, VALIDATION.name}]
         if matches:
