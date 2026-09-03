@@ -57,8 +57,12 @@ SHORT = {
 # Construal mapping. Abstract categories describe what a stay means; concrete
 # categories name something you can point at. This is the operational form of
 # the paper's construal-level hypothesis.
-ABSTRACT = {"Experience and lifestyle", "Brand"}
-CONCRETE = {"Facility and service", "Place", "Season and event"}
+# High-construal tags describe what the property means; low-construal tags name
+# something a guest could point at, book, or walk to. Identity, affiliation and
+# generic discovery tags sit outside the contrast and are excluded from it.
+ABSTRACT = {"Brand philosophy", "Japanese cultural register"}
+CONCRETE = {"Named outlet and talent", "Occasion and service", "Location",
+            "Season and limited time"}
 
 INK, MUTED, RULE, PAPER = "#1B1B18", "#78766D", "#E2DED4", "#FCFBF8"
 ACCENT, NEUTRAL, WARM = "#2E5248", "#CBC6B8", "#8C6A3F"
@@ -361,11 +365,12 @@ if view == "Competitive set":
         coded = long.merge(categories, on="tag", how="left")
         coded["category"] = coded["category"].fillna("Unclassifiable")
 
-        order = ["Brand", "Place", "Facility and service",
-                 "Experience and lifestyle", "Season and event",
-                 "Generic reach", "Unclassifiable"]
-        palette = ["#2E5248", "#5E8172", "#93AB9C", "#8C6A3F",
-                   "#BFA77E", "#CBC6B8", "#E6E2D8"]
+        order = ["Property identity", "Group and loyalty", "Brand philosophy",
+                 "Named outlet and talent", "Occasion and service",
+                 "Japanese cultural register", "Season and limited time",
+                 "Location", "Discovery stack", "Unclassifiable"]
+        palette = ["#2E5248", "#436B5E", "#5E8172", "#7E9A8B", "#9DB3A6",
+                   "#8C6A3F", "#B09267", "#C9B693", "#CBC6B8", "#E6E2D8"]
 
         mix = (pd.crosstab(coded["hotel"], coded["category"], normalize="index")
                * 100).reindex(HOTEL_ORDER)
@@ -390,15 +395,18 @@ if view == "Competitive set":
                 ).properties(height=250).configure_view(strokeWidth=0),
                 use_container_width=True)
         with c2:
-            bl = mix["Brand"].idxmax() if "Brand" in mix.columns else None
-            gl = mix["Generic reach"].idxmax() if "Generic reach" in mix.columns else None
+            bl = (mix["Brand philosophy"].idxmax()
+                  if "Brand philosophy" in mix.columns else None)
+            gl = (mix["Discovery stack"].idxmax()
+                  if "Discovery stack" in mix.columns else None)
             st.markdown(
                 f"<div class='read'>"
                 f"<p>Every distinct hashtag was coded against a written codebook. "
                 f"The mix is each house's total hashtag usage by category.</p>"
-                f"<p>{SHORT.get(bl, '—')} commits the largest share to its own brand "
-                f"language. {SHORT.get(gl, '—')} commits the most to generic industry "
-                f"tags — reach that belongs to no one in particular.</p></div>",
+                f"<p>{SHORT.get(bl, '—')} commits the largest share to proprietary "
+                f"brand language — coined phrases no competitor can use. "
+                f"{SHORT.get(gl, '—')} commits the most to the shared discovery stack: "
+                f"reach that belongs to no one in particular.</p></div>",
                 unsafe_allow_html=True)
             paper_note("<b>Paper:</b> the typology section. Brand, place and "
                        "experiential tags carry distinct symbolic functions; this "
@@ -427,10 +435,12 @@ if view == "Competitive set":
                     bot = cm.loc[cm["Abstract"].idxmin()]
                     st.markdown(
                         f"<div class='read'>"
-                        f"<p>Brand and experiential tags describe what a stay "
-                        f"<em>means</em>. Facility, place and seasonal tags name "
-                        f"something you can point at. The first construes the "
-                        f"property at a distance; the second brings it close.</p>"
+                        f"<p>Brand philosophy and cultural-register tags describe "
+                        f"what a stay <em>means</em>. Outlets, occasions, places and "
+                        f"seasons name something a guest could point at or book. The "
+                        f"first construes the property at a distance; the second "
+                        f"brings it close. Identity and discovery tags do neither and "
+                        f"are excluded here.</p>"
                         f"<p>{SHORT[top['hotel']]} tags most abstractly "
                         f"({top['Abstract']:.0f}%); {SHORT[bot['hotel']]} most "
                         f"concretely ({bot['Abstract']:.0f}% abstract). If "
