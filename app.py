@@ -90,9 +90,16 @@ st.markdown(f"""
   .stat-label {{ font-size:.78rem; color:{MUTED}; margin-top:.3rem; line-height:1.35; }}
   .read {{ border-left:2px solid {ACCENT}; padding-left:1rem; }}
   .read p {{ margin-bottom:.7rem; }}
-  .takeaway {{ background:#F1EFE8; border-radius:2px; padding:.9rem 1.05rem;
-               font-size:.86rem; color:#3E3C35; line-height:1.6; margin-top:1rem; }}
+  .takeaway {{ background:#F1EFE8; border-radius:3px; padding:1.05rem 1.25rem;
+               font-size:.88rem; color:#3E3C35; line-height:1.62;
+               margin:1.1rem 0 .4rem 0; }}
   .takeaway b {{ color:{INK}; font-weight:600; }}
+  .panel-title {{ font-family:'Newsreader',Georgia,serif; font-size:1.02rem;
+                  color:{INK}; margin:.1rem 0 .5rem 0; }}
+  .panel-note {{ font-size:.82rem; color:{MUTED}; line-height:1.55;
+                 margin:.5rem 0 .1rem 0; }}
+  div[data-testid="stVerticalBlockBorderWrapper"] {{
+      background:#FFFDFA; border-color:{RULE} !important; border-radius:3px; }}
   div[data-testid="stMetricValue"] {{ font-family:'Newsreader',serif; font-weight:400; }}
   #MainMenu, footer, header {{ visibility:hidden; }}
 </style>""", unsafe_allow_html=True)
@@ -300,99 +307,73 @@ post_script = (long.assign(is_jp=long["script"].eq("Japanese"))
 
 if view == "Competitive set":
 
-    st.markdown("## The set at a glance")
-    cols = st.columns(6, gap="small")
-    for col, hotel in zip(cols, HOTEL_ORDER):
-        r = volume[volume["hotel"] == hotel].iloc[0]
-        col.markdown(
-            f"<div class='stat-label' style='color:{INK};font-weight:600;"
-            f"min-height:2.6em'>{SHORT[hotel]}</div>"
-            f"<div class='stat-sm'>{r['per_post']:.1f}</div>"
-            f"<div class='stat-label'>tags per post<br>{int(r['posts'])} posts"
-            f"<br>{r['med_likes']:.0f} median likes</div>",
-            unsafe_allow_html=True)
+    # -- Summary tiles -------------------------------------------------------
+    tiles = st.columns(4, gap="medium")
+    stat(tiles[0], f"{len(posts):,}", "posts analysed", small=True)
+    stat(tiles[1], f"{len(long):,}", "hashtag uses", small=True)
+    stat(tiles[2], f"{long['tag'].nunique():,}", "distinct hashtags", small=True)
+    stat(tiles[3], f"{posts['tag_count'].mean():.1f}",
+         "average tags per post<br>across the set", small=True)
 
     st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
 
-    # -- Volume -------------------------------------------------------------
-    st.markdown("## No shared convention on how much to tag")
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        st.altair_chart(ranked_bar(volume, "per_post", "Hashtags per post"),
-                        use_container_width=True)
-    with c2:
-        lo = volume.loc[volume["per_post"].idxmin()]
-        hi = volume.loc[volume["per_post"].idxmax()]
-        q = volume.loc[volume["untagged"].idxmax()]
-        st.markdown(
-            f"<div class='read'>"
-            f"<p>Practice spans a factor of {hi['per_post'] / max(lo['per_post'], .01):.0f}. "
-            f"{SHORT[lo['hotel']]} averages {lo['per_post']:.2f} hashtags per post; "
-            f"{SHORT[hi['hotel']]} averages {hi['per_post']:.1f}.</p>"
-            f"<p>{SHORT[q['hotel']]} publishes {q['untagged']:.0f}% of its posts with "
-            f"no hashtag at all and still holds a median of {q['med_likes']:.0f} likes. "
-            f"Abstention is a live strategy here, not an oversight.</p></div>",
-            unsafe_allow_html=True)
-        takeaway(
-            "Six comparable houses in one city have not converged on a number, so "
-            "there is no industry benchmark to hit — and the figure each house uses "
-            "is a decision rather than a convention. Anyone told that a luxury "
-            "account should carry a set number of hashtags is contradicted here in "
-            "both directions. The question worth asking internally is not how many "
-            "you use, but whether the number was ever chosen.")
+    # -- Row 1: volume and discipline ---------------------------------------
+    st.markdown("## How much, and how consistently")
 
-    # -- Vocabulary ---------------------------------------------------------
-    st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
-    st.markdown("## Discipline measures more than volume does")
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        st.altair_chart(ranked_bar(vocab, "hhi", "Concentration (Herfindahl)",
-                                   fmt=".3f"), use_container_width=True)
-        show = vocab.rename(columns={"hotel": "Hotel", "distinct": "Distinct tags",
-                                     "hhi": "Concentration", "uses": "Hashtag uses"})
-        show["Concentration"] = show["Concentration"].map(
-            lambda v: "—" if pd.isna(v) else f"{v:.3f}")
-        st.dataframe(show, hide_index=True, use_container_width=True)
-        if vocab["hhi"].isna().any():
-            st.markdown(
-                f"<p class='note'>Concentration is withheld (—) for hotels with "
-                f"fewer than {MIN_USES} hashtag uses in this window; the index is "
-                f"not meaningful on a handful of observations.</p>",
-                unsafe_allow_html=True)
-    with c2:
-        usable = vocab.dropna(subset=["hhi"])
-        if len(usable) < 2:
-            st.info(f"Too few hashtag uses in this window to compare "
-                    f"concentration. Hotels need at least {MIN_USES} uses.")
-            tight = loose = None
-        else:
-            tight = usable.loc[usable["hhi"].idxmax()]
-            loose = usable.loc[usable["hhi"].idxmin()]
-        if tight is not None:
-            st.markdown(
-                f"<div class='read'>"
-                f"<p>Counting tags measures how loud an account is. Concentration "
-                f"measures whether the same language returns post after post — which "
-                f"is what accumulates into a searchable brand vocabulary.</p>"
-                f"<p>{SHORT[tight['hotel']]} draws on {int(tight['distinct'])} distinct "
-                f"tags across {int(tight['uses']):,} uses. {SHORT[loose['hotel']]} "
-                f"spreads {int(loose['uses']):,} uses across {int(loose['distinct']):,}. "
-                f"Both are choices; only one compounds.</p></div>",
-                unsafe_allow_html=True)
-        takeaway(
-            "Concentration is the Herfindahl index — the sum of squared shares — "
-            "borrowed from market-concentration analysis. It rises when a few tags "
-            "carry most of the usage and falls when usage is spread thin, which "
-            "makes it a direct measure of whether an account is curating or "
-            "improvising.<br><br>"
-            "A hashtag only accumulates equity if it returns. A tag used once is a "
-            "dead end: nobody follows it, it builds no history, and it makes the "
-            "account harder to recognise. Accounts at the disciplined end run a "
-            "fixed core of roughly ten tags on almost every post, with a small "
-            "rotating layer for seasons and outlets, rather than composing a fresh "
-            "block each time.")
+    lo = volume.loc[volume["per_post"].idxmin()]
+    hi = volume.loc[volume["per_post"].idxmax()]
+    quiet = volume.loc[volume["untagged"].idxmax()]
 
-    # -- Categories ---------------------------------------------------------
+    left, right = st.columns(2, gap="medium")
+    with left:
+        with st.container(border=True):
+            st.markdown("<div class='panel-title'>Hashtags per post</div>",
+                        unsafe_allow_html=True)
+            st.altair_chart(ranked_bar(volume, "per_post", None, height=215),
+                            use_container_width=True)
+            st.markdown(
+                f"<p class='panel-note'>{SHORT[hi['hotel']]} carries "
+                f"{hi['per_post']:.1f} tags per post, {SHORT[lo['hotel']]} "
+                f"{lo['per_post']:.2f} — a factor of "
+                f"{hi['per_post'] / max(lo['per_post'], .01):.0f} between two "
+                f"luxury houses in the same city. There is no convention "
+                f"here to conform to.</p>", unsafe_allow_html=True)
+    with right:
+        with st.container(border=True):
+            st.markdown("<div class='panel-title'>Vocabulary concentration"
+                        "</div>", unsafe_allow_html=True)
+            st.altair_chart(ranked_bar(vocab, "hhi", None, fmt=".3f", height=215),
+                            use_container_width=True)
+            usable = vocab.dropna(subset=["hhi"])
+            if len(usable) >= 2:
+                tight = usable.loc[usable["hhi"].idxmax()]
+                loose = usable.loc[usable["hhi"].idxmin()]
+                st.markdown(
+                    f"<p class='panel-note'>{SHORT[tight['hotel']]} reuses "
+                    f"{int(tight['distinct'])} tags across "
+                    f"{int(tight['uses']):,} uses. {SHORT[loose['hotel']]} "
+                    f"spreads {int(loose['uses']):,} uses over "
+                    f"{int(loose['distinct']):,}. High bars mean a small set "
+                    f"of tags is doing most of the work.</p>",
+                    unsafe_allow_html=True)
+
+    takeaway(
+        "<b>Volume is a decision; repetition is the strategy.</b> "
+        f"{SHORT[quiet['hotel']]} publishes {quiet['untagged']:.0f}% of its "
+        f"posts with no hashtag at all and still holds a median of "
+        f"{quiet['med_likes']:.0f} likes, so abstention is a live option rather "
+        "than an oversight.<br><br>"
+        "Concentration is the Herfindahl index — the sum of squared shares, "
+        "borrowed from market-concentration analysis. It rises when a few tags "
+        "carry most of the usage and falls when usage is scattered, which makes "
+        "it a direct measure of whether an account is curating or improvising. "
+        "The practical point: a hashtag only accumulates equity if it returns. A "
+        "tag used once is a dead end — nobody follows it, it builds no history, "
+        "and it makes the account harder to recognise. The disciplined accounts "
+        "here run a fixed core of roughly ten tags on almost every post, with a "
+        "thin rotating layer for seasons and outlets.")
+
+    # -- Row 2: what they tag about -----------------------------------------
     if categories is not None:
         coded = long.merge(categories, on="tag", how="left")
         coded["category"] = coded["category"].fillna("Unclassifiable")
@@ -401,41 +382,33 @@ if view == "Competitive set":
                  "Named outlet and talent", "Occasion and service",
                  "Japanese cultural register", "Season and limited time",
                  "Location", "Discovery stack", "Unclassifiable"]
-        palette = ["#2E5248", "#436B5E", "#5E8172", "#7E9A8B", "#9DB3A6",
-                   "#8C6A3F", "#B09267", "#C9B693", "#CBC6B8", "#E6E2D8"]
 
         mix = (pd.crosstab(coded["hotel"], coded["category"], normalize="index")
                * 100).reindex(HOTEL_ORDER)
 
         st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
         st.markdown("## What each house tags about")
-        c1, c2 = st.columns([3, 2], gap="large")
-        with c1:
-            ml = mix.reset_index().melt(id_vars="hotel", var_name="category",
-                                        value_name="pct")
-            ml["house"] = ml["hotel"].map(SHORT)
 
-            # Colour by distance from the six-hotel average for that category,
-            # so the eye lands on where a house departs from the market rather
-            # than on which categories are simply large everywhere.
-            market = ml.groupby("category")["pct"].transform("mean")
-            ml["gap"] = ml["pct"] - market
-            ml["label"] = ml["pct"].map(lambda v: f"{v:.0f}" if v >= 0.5 else "")
+        ml = mix.reset_index().melt(id_vars="hotel", var_name="category",
+                                    value_name="pct")
+        ml["house"] = ml["hotel"].map(SHORT)
+        market = ml.groupby("category")["pct"].transform("mean")
+        ml["gap"] = ml["pct"] - market
+        ml["label"] = ml["pct"].map(lambda v: f"{v:.0f}" if v >= 0.5 else "")
+        cats = [c for c in order if c in set(ml["category"])]
+        limit = max(6.0, float(ml["gap"].abs().max()))
 
-            cats = [c for c in order if c in set(ml["category"])]
-            limit = max(6.0, float(ml["gap"].abs().max()))
-
+        with st.container(border=True):
             grid = alt.Chart(ml).mark_rect(stroke=PAPER, strokeWidth=2).encode(
                 x=alt.X("category:N", title=None, sort=cats,
                         axis=alt.Axis(orient="top", domain=False, tickSize=0,
-                                      labelAngle=-32, labelColor=INK,
+                                      labelAngle=-30, labelColor=INK,
                                       labelFontSize=11, labelLimit=200,
                                       labelFont="IBM Plex Sans")),
                 y=alt.Y("house:N", title=None, sort=SHORT_ORDER, axis=axis_cat()),
-                color=alt.Color("gap:Q", title=None,
+                color=alt.Color("gap:Q",
                                 scale=alt.Scale(scheme="redyellowgreen",
-                                                domain=[-limit, limit],
-                                                reverse=False),
+                                                domain=[-limit, limit]),
                                 legend=None),
                 tooltip=[alt.Tooltip("hotel:N", title="Hotel"),
                          alt.Tooltip("category:N", title="Category"),
@@ -444,202 +417,96 @@ if view == "Competitive set":
                                      title="vs market average")],
             )
             numbers = alt.Chart(ml).mark_text(
-                fontSize=12, font="IBM Plex Sans", color=INK
-            ).encode(
+                fontSize=12, font="IBM Plex Sans", color=INK).encode(
                 x=alt.X("category:N", sort=cats),
-                y=alt.Y("house:N", sort=SHORT_ORDER),
-                text="label:N",
-            )
-            st.altair_chart(
-                (grid + numbers).properties(height=300)
-                .configure_view(strokeWidth=0),
-                use_container_width=True)
+                y=alt.Y("house:N", sort=SHORT_ORDER), text="label:N")
+            st.altair_chart((grid + numbers).properties(height=290)
+                            .configure_view(strokeWidth=0),
+                            use_container_width=True)
             st.markdown(
-                "<p class='note'>Each cell is that category's share of the "
-                "hotel's total hashtag use, in percent. Green marks a share "
-                "above the six-hotel average for that category, red below — so "
-                "the colour shows where a house departs from the market, not "
-                "simply where its numbers are large.</p>",
-                unsafe_allow_html=True)
-        with c2:
-            bl = (mix["Brand philosophy"].idxmax()
-                  if "Brand philosophy" in mix.columns else None)
-            gl = (mix["Discovery stack"].idxmax()
-                  if "Discovery stack" in mix.columns else None)
-            st.markdown(
-                f"<div class='read'>"
-                f"<p>Every distinct hashtag was coded against a written codebook. "
-                f"The mix is each house's total hashtag usage by category.</p>"
-                f"<p>{SHORT.get(bl, '—')} commits the largest share to proprietary "
-                f"brand language — coined phrases no competitor can use. "
-                f"{SHORT.get(gl, '—')} commits the most to the shared discovery stack: "
-                f"reach that belongs to no one in particular.</p></div>",
-                unsafe_allow_html=True)
-            takeaway(
-                "The categories were derived from the vocabulary these six accounts "
-                "actually use, then coded against a written codebook, rather than "
-                "imposed from theory. Each does a different job. Property identity "
-                "asserts who you are. Brand philosophy asserts what you stand for, in "
-                "language no competitor can use. The discovery stack asserts nothing at "
-                "all.<br><br>"
-                "The share worth watching is the last one. Discovery-stack tags place a "
-                "post in a feed beside every other hotel in the city, competing on "
-                "volume against accounts many times larger. That is not reach; it is "
-                "borrowed traffic on a term the property will never own.")
+                "<p class='panel-note'>Each cell is that category's share of the "
+                "hotel's total hashtag use, in percent. Green marks a share above "
+                "the six-hotel average for that category, red below — so colour "
+                "shows where a house departs from the market, not simply where "
+                "its numbers are large.</p>", unsafe_allow_html=True)
 
-        # -- Construal ------------------------------------------------------
+        # Construal + audience side by side
         cons = coded[coded["category"].isin(ABSTRACT | CONCRETE)].copy()
-        if len(cons):
-            cons["level"] = np.where(cons["category"].isin(ABSTRACT),
-                                     "Abstract", "Concrete")
-            cm = (pd.crosstab(cons["hotel"], cons["level"], normalize="index")
-                  * 100).reindex(HOTEL_ORDER).reset_index()
-            if "Abstract" in cm.columns:
-                st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
-                st.markdown("## Distance, measured")
-                c1, c2 = st.columns([3, 2], gap="large")
-                with c1:
-                    st.altair_chart(
-                        ranked_bar(cm.rename(columns={"Abstract": "abstract"}),
-                                   "abstract",
-                                   "Share of tags that are abstract (%)", fmt=".1f"),
-                        use_container_width=True)
-                with c2:
-                    top = cm.loc[cm["Abstract"].idxmax()]
-                    bot = cm.loc[cm["Abstract"].idxmin()]
-                    st.markdown(
-                        f"<div class='read'>"
-                        f"<p>Brand philosophy and cultural-register tags describe "
-                        f"what a stay <em>means</em>. Outlets, occasions, places and "
-                        f"seasons name something a guest could point at or book. The "
-                        f"first construes the property at a distance; the second "
-                        f"brings it close. Identity and discovery tags do neither and "
-                        f"are excluded here.</p>"
-                        f"<p>{SHORT[top['hotel']]} tags most abstractly "
-                        f"({top['Abstract']:.0f}%); {SHORT[bot['hotel']]} most "
-                        f"concretely ({bot['Abstract']:.0f}% abstract). If "
-                        f"psychological distance sustains luxury value, this is "
-                        f"where it becomes visible in daily practice.</p></div>",
-                        unsafe_allow_html=True)
-                    takeaway(
-                        "Construal level theory holds that psychological distance and abstract "
-                        "language reinforce one another, and luxury depends on that distance. "
-                        "Splitting the vocabulary into abstract and concrete makes the distance "
-                        "visible in ordinary practice.<br><br>"
-                        "Concrete tags sell a booking; abstract tags build a position. Neither "
-                        "is wrong, but the balance should be deliberate. A house tagging almost "
-                        "entirely in outlets, dates and districts is running a promotions "
-                        "calendar. A house with a real abstract share is building something a "
-                        "competitor cannot copy by opening a similar restaurant.")
+        jp_by_hotel = (long.assign(is_jp=long["script"].eq("Japanese"))
+                       .groupby("hotel", as_index=False)["is_jp"].mean())
+        jp_by_hotel["jp_pct"] = jp_by_hotel["is_jp"] * 100
+        market_jp = (long["script"] == "Japanese").mean() * 100
 
-    # -- Japan: script over time --------------------------------------------
-    st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
-    st.markdown("## Which audience is being tagged for")
+        left, right = st.columns(2, gap="medium")
+        with left:
+            with st.container(border=True):
+                st.markdown("<div class='panel-title'>Abstract share of "
+                            "vocabulary</div>", unsafe_allow_html=True)
+                if len(cons):
+                    cons["level"] = np.where(cons["category"].isin(ABSTRACT),
+                                             "Abstract", "Concrete")
+                    cm = (pd.crosstab(cons["hotel"], cons["level"],
+                                      normalize="index") * 100
+                          ).reindex(HOTEL_ORDER).reset_index()
+                    if "Abstract" in cm.columns:
+                        st.altair_chart(
+                            ranked_bar(cm.rename(columns={"Abstract": "abstract"}),
+                                       "abstract", None, fmt=".1f", height=215),
+                            use_container_width=True)
+                        top = cm.loc[cm["Abstract"].idxmax()]
+                        bot = cm.loc[cm["Abstract"].idxmin()]
+                        st.markdown(
+                            f"<p class='panel-note'>Brand philosophy and cultural "
+                            f"tags describe what a stay means; outlets, occasions, "
+                            f"places and seasons name something bookable. "
+                            f"{SHORT[top['hotel']]} sits highest at "
+                            f"{top['Abstract']:.0f}% abstract, "
+                            f"{SHORT[bot['hotel']]} lowest at "
+                            f"{bot['Abstract']:.0f}%.</p>",
+                            unsafe_allow_html=True)
+        with right:
+            with st.container(border=True):
+                st.markdown("<div class='panel-title'>Hashtags in Japanese "
+                            "script</div>", unsafe_allow_html=True)
+                st.altair_chart(ranked_bar(jp_by_hotel, "jp_pct", None,
+                                           fmt=".1f", height=215),
+                                use_container_width=True)
+                top = jp_by_hotel.loc[jp_by_hotel["jp_pct"].idxmax()]
+                bottom = jp_by_hotel.loc[jp_by_hotel["jp_pct"].idxmin()]
+                st.markdown(
+                    f"<p class='panel-note'>The set averages {market_jp:.0f}%. "
+                    f"{SHORT[top['hotel']]} tags {top['jp_pct']:.0f}% in "
+                    f"Japanese, {SHORT[bottom['hotel']]} {bottom['jp_pct']:.0f}% "
+                    f"— opposite bets about who should be able to find "
+                    f"them.</p>", unsafe_allow_html=True)
 
-    qt = long.copy()
-    qt["quarter"] = qt["date"].dt.to_period("Q").dt.to_timestamp()
-    q = (qt.assign(is_jp=qt["script"].eq("Japanese"))
-         .groupby("quarter").agg(jp_pct=("is_jp", lambda s: s.mean() * 100),
-                                 n=("is_jp", "size")).reset_index())
-    q = q[q["n"] >= 100].copy()
-    # Vega's time format has no quarter token, so build the label ourselves.
-    q["label"] = (q["quarter"].dt.year.astype(str) + " Q"
-                  + q["quarter"].dt.quarter.astype(str))
-
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        if len(q) >= 3:
-            st.altair_chart(
-                alt.Chart(q).mark_line(
-                    color=ACCENT, strokeWidth=2,
-                    point=alt.OverlayMarkDef(color=ACCENT, size=34)
-                ).encode(
-                    x=alt.X("label:N", title=None, sort=list(q["label"]),
-                            axis=axis_cat()),
-                    y=alt.Y("jp_pct:Q", title="Japanese-script tags (%)",
-                            scale=alt.Scale(zero=False), axis=axis_num()),
-                    tooltip=[alt.Tooltip("label:N", title="Quarter"),
-                             alt.Tooltip("jp_pct:Q", format=".1f"),
-                             alt.Tooltip("n:Q", title="tags")],
-                ).properties(height=260).configure_view(strokeWidth=0),
-                use_container_width=True)
-        else:
-            st.info("Not enough quarters in this window to plot a trend.")
-    with c2:
-        if len(q) >= 3:
-            peak, last = q.loc[q["jp_pct"].idxmax()], q.iloc[-1]
-            st.markdown(
-                f"<div class='read'>"
-                f"<p>Japanese-script tagging peaked at {peak['jp_pct']:.0f}% in "
-                f"{peak['label']} and stands at {last['jp_pct']:.0f}% by "
-                f"{last['label']} — a swing of "
-                f"{peak['jp_pct'] - last['jp_pct']:.0f} points toward Latin script "
-                f"across the whole set.</p>"
-                f"<p>Script is not decoration in this market. Japanese users search "
-                f"Instagram by hashtag at several times the global rate, so the "
-                f"script chosen decides which of two audiences can find the post "
-                f"at all.</p></div>", unsafe_allow_html=True)
         takeaway(
-            "Script is a targeting decision that looks like a formatting one. A tag "
-            "in Japanese is findable by the domestic guest and invisible to the "
-            "inbound one; Latin script reverses that. Japanese users search "
-            "Instagram by hashtag at several times the global rate, so this is not "
-            "a stylistic detail — it decides who can reach the post.<br><br>"
-            "Whatever the split, it allocates discoverability between two "
-            "audiences, and the check worth running is whether that allocation "
-            "matches where the revenue comes from. The set as a whole has moved 13 "
-            "points toward Latin script since early 2025, alongside the inbound "
-            "recovery — though this data cannot show that one caused the other.")
+            "<b>Read the heatmap for where you differ, not where you are big.</b> "
+            "Property identity is large for everyone; that tells you little. The "
+            "revealing cells are the ones far from the market average. "
+            "Discovery-stack tags in particular place a post in a feed beside "
+            "every other hotel in the city, competing on volume against much "
+            "larger accounts — that is borrowed traffic on a term the property "
+            "will never own, not reach.<br><br>"
+            "<b>The abstract share is a positioning measure.</b> Construal level "
+            "theory holds that psychological distance and abstract language "
+            "reinforce one another, and luxury depends on that distance. Concrete "
+            "tags sell a booking; abstract tags build a position. A house tagging "
+            "almost entirely in outlets, dates and districts is running a "
+            "promotions calendar. A house with a real abstract share is building "
+            "something a competitor cannot copy by opening a similar "
+            "restaurant.<br><br>"
+            "<b>Script is a targeting decision that looks like formatting.</b> "
+            "Instagram hashtag search is script-literal: a guest searching in "
+            "Japanese will not surface a post tagged only in Latin characters, "
+            "and the reverse holds. Japanese users search by hashtag at several "
+            "times the global rate, so the split above allocates discoverability "
+            "between the domestic and the inbound guest. The test is whether that "
+            "allocation matches the property's own booking mix.")
 
-    # -- Japan: per-hotel audience split -------------------------------------
-    jp_by_hotel = (long.assign(is_jp=long["script"].eq("Japanese"))
-                   .groupby("hotel", as_index=False)["is_jp"].mean())
-    jp_by_hotel["jp_pct"] = jp_by_hotel["is_jp"] * 100
-    market_jp = (long["script"] == "Japanese").mean() * 100
-
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        base = ranked_bar(jp_by_hotel, "jp_pct",
-                          "Share of hashtags in Japanese script (%)", fmt=".1f",
-                          height=240)
-        rule = (alt.Chart(pd.DataFrame({"v": [market_jp]}))
-                .mark_rule(color=WARM, strokeDash=[4, 3], strokeWidth=1.5)
-                .encode(x="v:Q"))
-        st.altair_chart(base, use_container_width=True)
-        st.markdown(
-            f"<p class='note'>The six-hotel average is "
-            f"{market_jp:.0f}% Japanese script. Bars above that line are "
-            f"weighted toward the domestic guest; bars below toward the inbound "
-            f"traveller.</p>", unsafe_allow_html=True)
-    with c2:
-        top = jp_by_hotel.loc[jp_by_hotel["jp_pct"].idxmax()]
-        bottom = jp_by_hotel.loc[jp_by_hotel["jp_pct"].idxmin()]
-        st.markdown(
-            f"<div class='read'>"
-            f"<p>The spread across the set is wide. {SHORT[top['hotel']]} tags "
-            f"{top['jp_pct']:.0f}% in Japanese; {SHORT[bottom['hotel']]} "
-            f"{bottom['jp_pct']:.0f}%. Two houses in the same city, competing for "
-            f"overlapping guests, have made opposite bets about who should be "
-            f"able to find them.</p>"
-            f"<p>Within a single post the default is bilingual — most tagged "
-            f"posts carry both scripts at once. That is a reasonable hedge, but "
-            f"hedging on every post is not the same as a bilingual strategy; it "
-            f"can equally mean the question was never asked.</p></div>",
-            unsafe_allow_html=True)
-        takeaway(
-            "This is the practical use of the section. Instagram hashtag search "
-            "is script-literal: a guest searching in Japanese will not surface a "
-            "post tagged only in Latin characters, and the reverse holds. So the "
-            "split above is not a stylistic profile — it is an allocation of "
-            "discoverability between the domestic and the inbound guest.<br><br>"
-            "The test is simple. Compare a property's split against its own "
-            "booking mix. A hotel drawing most of its revenue from overseas "
-            "visitors while tagging predominantly in Japanese is spending its "
-            "search visibility on the wrong audience, and vice versa.")
-
-    # -- Engagement ---------------------------------------------------------
+    # -- Row 3: engagement and format ---------------------------------------
     st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
-    st.markdown("## More tags does not mean more engagement")
+    st.markdown("## What the numbers do, and do not, reward")
 
     corr = pd.DataFrame([{
         "hotel": h,
@@ -649,86 +516,121 @@ if view == "Competitive set":
                               posts[posts["hotel"] == h]["comments"]),
     } for h in HOTEL_ORDER])
 
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        cm2 = corr.melt(id_vars="hotel", var_name="metric",
-                        value_name="rho").dropna()
-        cm2["house"] = cm2["hotel"].map(SHORT)
-        if len(cm2):
-            st.altair_chart(
-                alt.Chart(cm2).mark_bar(height=13).encode(
-                    x=alt.X("rho:Q", title="Rank correlation with hashtag count",
-                            scale=alt.Scale(domain=[-.35, .35]), axis=axis_num()),
-                    y=alt.Y("house:N", title=None, sort=SHORT_ORDER, axis=axis_cat()),
-                    yOffset=alt.YOffset("metric:N"),
-                    color=alt.Color("metric:N",
-                                    scale=alt.Scale(domain=["Likes", "Comments"],
-                                                    range=[ACCENT, WARM]),
-                                    legend=alt.Legend(title=None, orient="top",
-                                                      labelColor=MUTED)),
-                    tooltip=[alt.Tooltip("hotel:N", title="Hotel"), "metric",
-                             alt.Tooltip("rho:Q", format=".3f")],
-                ).properties(height=290).configure_view(strokeWidth=0),
-                use_container_width=True)
-        else:
-            st.info("Too few posts in this window to estimate correlations.")
-    with c2:
-        st.markdown(
-            "<div class='read'>"
-            "<p>Each bar is measured inside a single account. Comparing across "
-            "hotels would only measure who has more followers, and follower "
-            "counts are not observable from public posts.</p>"
-            "<p>The effect splits by house and by metric. On several accounts more "
-            "tags accompany modestly more likes. On the most established accounts "
-            "likes are flat while comments fall — reach and conversation are not "
-            "the same outcome, and tagging appears to trade one against the "
-            "other.</p></div>", unsafe_allow_html=True)
-        takeaway(
-            "Rank correlation is used because engagement is heavily skewed: a "
-            "handful of unusually large posts would dominate a linear measure. Each "
-            "figure is calculated inside one account, since follower counts are not "
-            "observable from public posts.<br><br>"
-            "Adding hashtags is not a free lever. On the accounts here with the "
-            "largest audiences, more tags accompany no gain in likes and a fall in "
-            "comments — the metric that shows someone stopped to respond rather "
-            "than scrolled past. Reporting that treats reach and engagement as one "
-            "number misses that trade entirely.")
-
-    st.markdown("<p class='note'>Correlational, observational data. Subject, "
-                "timing and format all move engagement, and none are controlled "
-                "here.</p>", unsafe_allow_html=True)
-
-    # -- Format -------------------------------------------------------------
-    st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
-    st.markdown("## Format, for context")
     fmt = (posts.groupby("format")
            .agg(posts=("likes", "size"), median_likes=("likes", "median"))
            .reset_index().sort_values("median_likes", ascending=False))
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        st.altair_chart(
-            alt.Chart(fmt).mark_bar(height=24).encode(
-                x=alt.X("median_likes:Q", title="Median likes", axis=axis_num()),
-                y=alt.Y("format:N", title=None, sort="-x", axis=axis_cat()),
-                color=alt.value(ACCENT),
-                tooltip=["format", "posts", "median_likes"],
-            ).properties(height=150).configure_view(strokeWidth=0),
-            use_container_width=True)
-    with c2:
-        ranking = " → ".join(f"{r['format']} ({r['median_likes']:.0f})"
-                             for _, r in fmt.iterrows())
-        video_rank = (list(fmt["format"]).index("Video") + 1
-                      if "Video" in list(fmt["format"]) else None)
-        video_line = (
-            f"Video ranks {video_rank} of {len(fmt)} on median likes here."
-            if video_rank else "")
-        st.markdown(
-            f"<div class='read'>"
-            f"<p>By median likes: {ranking}. {video_line}</p>"
-            f"<p>One caveat, stated plainly: this sample is feed posts only. "
-            f"Reels are excluded, so this compares video inside the feed against "
-            f"stills, not the whole video strategy.</p></div>",
-            unsafe_allow_html=True)
+
+    left, right = st.columns(2, gap="medium")
+    with left:
+        with st.container(border=True):
+            st.markdown("<div class='panel-title'>Hashtag count against "
+                        "engagement</div>", unsafe_allow_html=True)
+            cm2 = corr.melt(id_vars="hotel", var_name="metric",
+                            value_name="rho").dropna()
+            cm2["house"] = cm2["hotel"].map(SHORT)
+            if len(cm2):
+                st.altair_chart(
+                    alt.Chart(cm2).mark_bar(height=11).encode(
+                        x=alt.X("rho:Q", title=None,
+                                scale=alt.Scale(domain=[-.35, .35]),
+                                axis=axis_num()),
+                        y=alt.Y("house:N", title=None, sort=SHORT_ORDER,
+                                axis=axis_cat()),
+                        yOffset=alt.YOffset("metric:N"),
+                        color=alt.Color("metric:N",
+                                        scale=alt.Scale(
+                                            domain=["Likes", "Comments"],
+                                            range=[ACCENT, WARM]),
+                                        legend=alt.Legend(title=None,
+                                                          orient="top",
+                                                          labelColor=MUTED)),
+                        tooltip=[alt.Tooltip("hotel:N", title="Hotel"), "metric",
+                                 alt.Tooltip("rho:Q", format=".3f")],
+                    ).properties(height=230).configure_view(strokeWidth=0),
+                    use_container_width=True)
+            st.markdown(
+                "<p class='panel-note'>Rank correlation, measured inside each "
+                "account. Bars to the right mean more tags accompany more "
+                "engagement; to the left, less. Nothing here is close to a "
+                "strong relationship.</p>", unsafe_allow_html=True)
+    with right:
+        with st.container(border=True):
+            st.markdown("<div class='panel-title'>Median likes by post format"
+                        "</div>", unsafe_allow_html=True)
+            st.altair_chart(
+                alt.Chart(fmt).mark_bar(height=26).encode(
+                    x=alt.X("median_likes:Q", title=None, axis=axis_num()),
+                    y=alt.Y("format:N", title=None, sort="-x", axis=axis_cat()),
+                    color=alt.value(ACCENT),
+                    tooltip=["format", "posts", "median_likes"],
+                ).properties(height=230).configure_view(strokeWidth=0),
+                use_container_width=True)
+            ranking = ", ".join(f"{r['format']} {r['median_likes']:.0f}"
+                                for _, r in fmt.iterrows())
+            st.markdown(
+                f"<p class='panel-note'>{ranking}. Feed posts only — reels are "
+                f"outside this sample, so this compares video inside the feed "
+                f"against stills.</p>", unsafe_allow_html=True)
+
+    takeaway(
+        "<b>Adding hashtags is not a free lever.</b> Rank correlation is used "
+        "because engagement is heavily skewed — a handful of unusually large "
+        "posts would dominate a linear measure — and each figure is calculated "
+        "inside one account, since follower counts are not observable from "
+        "public posts.<br><br>"
+        "On the accounts here with the largest audiences, more tags accompany no "
+        "gain in likes and a fall in comments, the metric that shows someone "
+        "stopped to respond rather than scrolled past. Reporting that treats "
+        "reach and engagement as a single number will miss that trade entirely. "
+        "All of these relationships are correlational: subject, timing and format "
+        "move engagement too, and none are controlled here.")
+
+    # -- Row 4: the trend ----------------------------------------------------
+    qt = long.copy()
+    qt["quarter"] = qt["date"].dt.to_period("Q").dt.to_timestamp()
+    q = (qt.assign(is_jp=qt["script"].eq("Japanese"))
+         .groupby("quarter").agg(jp_pct=("is_jp", lambda s: s.mean() * 100),
+                                 n=("is_jp", "size")).reset_index())
+    q = q[q["n"] >= 100].copy()
+    q["label"] = (q["quarter"].dt.year.astype(str) + " Q"
+                  + q["quarter"].dt.quarter.astype(str))
+
+    if len(q) >= 3:
+        st.markdown("<div class='rule'></div>", unsafe_allow_html=True)
+        st.markdown("## The audience mix is shifting")
+        peak, last = q.loc[q["jp_pct"].idxmax()], q.iloc[-1]
+
+        with st.container(border=True):
+            st.altair_chart(
+                alt.Chart(q).mark_line(
+                    color=ACCENT, strokeWidth=2,
+                    point=alt.OverlayMarkDef(color=ACCENT, size=34)).encode(
+                    x=alt.X("label:N", title=None, sort=list(q["label"]),
+                            axis=axis_cat()),
+                    y=alt.Y("jp_pct:Q", title="Japanese-script tags (%)",
+                            scale=alt.Scale(zero=False), axis=axis_num()),
+                    tooltip=[alt.Tooltip("label:N", title="Quarter"),
+                             alt.Tooltip("jp_pct:Q", format=".1f"),
+                             alt.Tooltip("n:Q", title="tags")],
+                ).properties(height=250).configure_view(strokeWidth=0),
+                use_container_width=True)
+            st.markdown(
+                f"<p class='panel-note'>Share of all hashtags across the six "
+                f"accounts written in Japanese script, by quarter. Peak "
+                f"{peak['jp_pct']:.0f}% in {peak['label']}; "
+                f"{last['jp_pct']:.0f}% by {last['label']}.</p>",
+                unsafe_allow_html=True)
+
+        takeaway(
+            f"<b>The set has moved {peak['jp_pct'] - last['jp_pct']:.0f} points "
+            f"toward Latin script since {peak['label']}.</b> That is a "
+            f"collective drift, not one property changing tack, and it runs "
+            f"alongside the inbound recovery — though this data cannot show that "
+            f"one caused the other.<br><br>"
+            f"For a property reviewing its own tagging, the useful question is "
+            f"whether it has drifted with the market by decision or by default. "
+            f"A tag block copied forward from previous seasons will keep an old "
+            f"audience allocation in place long after the guest mix has changed.")
 
 # ===========================================================================
 # SINGLE PROPERTY
